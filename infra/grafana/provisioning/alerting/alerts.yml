@@ -1,0 +1,43 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: slo-backend
+    folder: SLO
+    interval: 1m
+    rules:
+      - uid: p95-latency
+        title: P95 latency > 200ms (5m)
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.2
+              queryType: timeSeriesQuery
+              editorMode: code
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations: {}
+        labels: { severity: warning }
+      - uid: error-rate
+        title: Error rate > 1% (5m)
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: (sum(rate(http_errors_total[5m])) / sum(rate(http_requests_total[5m]))) > 0.01
+              queryType: timeSeriesQuery
+              editorMode: code
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations: {}
+        labels: { severity: critical }

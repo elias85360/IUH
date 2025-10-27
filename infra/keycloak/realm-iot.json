@@ -1,0 +1,32 @@
+{
+  "realm": "iot",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      { "name": "viewer" },
+      { "name": "analyst" },
+      { "name": "admin" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "iot-dashboard",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:4001/*",
+        "http://localhost:8080/*",
+        "http://localhost:5174/auth/callback",
+        "http://localhost:5174/*"
+        
+      ],
+      "webOrigins": [
+        "http://localhost:5174",
+        "http://localhost"
+      ]
+    }
+  ]
+}

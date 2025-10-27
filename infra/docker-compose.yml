@@ -1,0 +1,192 @@
+services:
+  db:
+    image: timescale/timescaledb:2.14.2-pg14
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: iot
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10 
+    networks:
+      - default
+  redis: 
+    image: redis:7.2-alpine
+    ports: ["6379:6379"]
+    networks:
+      - default
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.2
+    command: ["start-dev","--http-port=8080","--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # Advertise frontend URL so discovery/jwks uses localhost for browser
+      # (backend overrides JWKS URL anyway; this helps consistency)
+      KC_HOSTNAME: localhost
+      KC_HTTP_ENABLED: "true"
+    ports: ["8080:8080"]
+    volumes:
+      - ./keycloak/realm-iot.json:/opt/keycloak/data/import/realm-iot.json:ro
+    depends_on: [db]
+    networks:
+      - default
+  api:
+    build:
+      context: ../backend
+    # Use the backend-specific environment file instead of the deprecated root .env.prod
+    env_file:
+      - ../backend/.env.prod
+    environment:
+      # Persistence / cache
+      DATABASE_URL: postgres://postgres:postgres@db:5432/iot
+      REDIS_URL: redis://redis:6379
+      TSDB_MIRROR: "1"
+      TSDB_READ: "1"
+      PREAGG_RETENTION_DAYS: "90"
+      # Security
+      RBAC_ENFORCE: "1"
+      ALLOW_API_KEY_WITH_RBAC: "0"
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/iot
+      OIDC_CLIENT_ID: iot-dashboard
+      OIDC_REQUIRE_AUD: "0"
+      OIDC_IGNORE_ISSUER: "1"
+      OIDC_JWKS_URL: http://keycloak:8080/realms/iot/protocol/openid-connect/certs
+      TRUST_PROXY: "true"
+      RATE_LIMIT: 1000/1m
+      # CORS (serving SPA from same host via nginx; not strictly needed)
+      CORS_ORIGIN: http://localhost
+      # Observability
+      LOG_LEVEL: info
+      # Ingestion: Kienlab via nginx proxy
+      DATA_SOURCE: kienlab
+      # Using nginx as proxy to kienlab
+      KIENLAB_BASE: "http://nginx/kienlab"
+      KIENLAB_DEVICES: "F0:24:F9:57:59:18,3C:8A:1F:0B:7C:C4,D4:8A:FC:A5:ED:E0,3C:8A:1F:0B:70:D4,D4:8A:FC:99:66:68,3C:8A:1F:0B:6F:A8"
+      KIENLAB_AUTH_SCHEME: ""
+      # No API key needed as we're using direct proxy
+      KIENLAB_API_KEY: ""
+      KIENLAB_LENGTH: "1000"
+      KIENLAB_POLL_MS: "5000"
+      KIENLAB_MAX_INIT_ROWS: "500"
+      KIENLAB_DEBUG: "1"
+      # Temporary test API key for local verification only. Remove for real deployments.
+      API_KEY: "testkey"
+
+      # Ingestion: Kienlab via VPS proxy
+      # Point to your VPS proxy endpoint
+      #KIENLAB_BASE: "http://YOUR_VPS_IP_OR_DOMAIN/kienlab-proxy"
+      # No API key needed as proxy will handle authentication
+      #KIENLAB_API_KEY: ""
+
+      #demander de mettre ca sur le nginx du VPS
+      # Dans votre configuration nginx sur le VPS
+      #location /kienlab-proxy/ {
+          # Rediriger vers l'API Kienlab en ajoutant l'authentification
+          #proxy_pass http://eprophet.kienlab.com/;
+          
+          # Ajouter les headers nécessaires
+          #proxy_set_header Host eprophet.kienlab.com;
+          
+          # Ici vous pouvez ajouter l'authentification si nécessaire
+          # proxy_set_header Authorization "Bearer VOTRE_TOKEN";
+      #}
+      # Si vous utilisez auth_basic, créez d'abord le fichier .htpasswd
+      # sudo htpasswd -c /etc/nginx/.htpasswd votre_utilisateur
+
+      # Activez le site
+      #sudo ln -s /etc/nginx/sites-available/kienlab-proxy.conf /etc/nginx/sites-enabled/
+      # Vérifiez la configuration
+      #sudo nginx -t
+      # Rechargez nginx
+      #sudo systemctl reload nginx
+      #Une fois tout configuré, redémarrez les conteneurs avec la nouvelle configuration :
+      #docker compose down; docker compose up -d
+      # Si --- IGNORE ---
+      #
+
+    volumes:
+      # Persist thresholds.json, assets-meta.json and audit logs across restarts
+      - api_data:/app/backend/data
+      - api_logs:/var/log/iot
+    ports: ["4001:4000"]
+    depends_on: [db, redis]
+    healthcheck:
+      test: ["CMD-SHELL","curl -f http://localhost:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+    
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on: [api]
+    networks:
+      - default
+
+  grafana:
+    image: grafana/grafana:10.4.5
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    depends_on: [prometheus]
+    networks:
+      - default
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+  #py-forecast:
+  #  build:
+  #    context: ./py-forecast
+  #  ports:
+  #    - "8000:8000"
+  #  restart: unless-stopped
+  #  depends_on: [api]
+  #  networks:
+  #    - default
+  nginx:
+    build:
+      context: ..
+      dockerfile: infra/nginx.Dockerfile
+    # Nginx does not use most of the backend environment variables. Still inherit from backend
+    # env file so that KIENLAB_BASE and related variables are available if needed.
+    env_file:
+      - ../backend/.env.prod
+    ports: ["80:80", "443:443"]
+    environment:
+      # Pour le proxy Kienlab
+      KIENLAB_PROXY_TARGET: "http://eprophet.kienlab.com"
+    depends_on: [api]
+    volumes:
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - default
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/logs 
+    networks:
+      - default
+
+volumes:
+  mosquitto_data: {}
+  mosquitto_log: {}
+  api_data: {}
+  api_logs: {}
+
+networks:
+  default:
+    name: iot-net

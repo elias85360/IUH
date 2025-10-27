@@ -1,0 +1,6 @@
+[
+  { "id": "dev-1", "name": "Device 1", "type": "mock", "room": "A", "tags": ["demo"] },
+  { "id": "dev-2", "name": "Device 2", "type": "mock", "room": "B", "tags": ["demo"] }
+]
+
+ 

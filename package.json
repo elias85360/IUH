@@ -1,0 +1,13 @@
+{
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  },
+  "dependencies": {
+    "oidc-client-ts": "^3.3.0",
+    "pdfkit": "^0.17.2"
+  },
+  "scripts": {
+    "test:backend": "node scripts/tests_backend/run-all.mjs",
+    "test": "npm run test:backend"
+  }
+}

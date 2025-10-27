@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # Frontend install and build
+      - name: Install frontend dependencies
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      - name: Build frontend (production)
+        working-directory: dashboard/frontend
+        run: npm run build:prod
+
+      # Backend install
+      - name: Install backend dependencies
+        working-directory: dashboard/backend
+        run: npm ci
+
+      - name: Placeholder for tests
+        run: echo "No automated tests configured yet. Please add unit, integration and e2e tests."
+        
+      # Playwright E2E scaffold (disabled by default)
+      # - name: Install Playwright Browsers
+      #   run: npx playwright install --with-deps
+      # - name: Run Playwright tests
+      #   working-directory: frontend
+      #   run: npx playwright test
+
