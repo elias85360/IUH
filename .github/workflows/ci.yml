@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -19,25 +19,42 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      # Frontend install and build
+      # Frontend: install, build, unit tests
       - name: Install frontend dependencies
-        working-directory: dashboard/frontend
-        run: npm ci
+        working-directory: frontend
+        run: npm install
+
+      - name: Frontend unit tests (vitest)
+        working-directory: frontend
+        run: npm run test --silent
 
       - name: Build frontend (production)
-        working-directory: dashboard/frontend
+        working-directory: frontend
         run: npm run build:prod
 
-      # Backend install
+      # Backend: install and tests
       - name: Install backend dependencies
-        working-directory: dashboard/backend
-        run: npm ci
+        working-directory: backend
+        run: npm install
 
-      - name: Placeholder for tests
-        run: echo "No automated tests configured yet. Please add unit, integration and e2e tests."
-        
+      - name: Backend tests (jest)
+        working-directory: backend
+        env:
+          RBAC_ENFORCE: 0
+        run: npm test --silent
+
+      # Optional: Docker build (no push)
+      - name: Build backend Docker image
+        working-directory: backend
+        run: docker build -t iot-backend:ci .
+
+      - name: Build nginx Docker image
+        working-directory: .
+        run: docker build -f infra/nginx.Dockerfile -t iot-nginx:ci .
+
       # Playwright E2E scaffold (disabled by default)
       # - name: Install Playwright Browsers
+      #   working-directory: frontend
       #   run: npx playwright install --with-deps
       # - name: Run Playwright tests
       #   working-directory: frontend

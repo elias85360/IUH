@@ -12,7 +12,8 @@
     "dev:dev": "npm run use:dev && npm run dev",
     "dev:prod": "npm run use:prod && npm run dev",
     "build:dev": "npm run use:dev && npm run build",
-    "build:prod": "npm run use:prod && npm run build"
+    "build:prod": "npm run use:prod && npm run build",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.1",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^7.1.11"
+    "vite": "^7.1.11",
+    "vitest": "^2.1.4"
   }
-} 
+}

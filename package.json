@@ -4,7 +4,8 @@
   },
   "dependencies": {
     "oidc-client-ts": "^3.3.0",
-    "pdfkit": "^0.17.2"
+    "pdfkit": "^0.17.2",
+    "prom-client": "^15.1.3"
   },
   "scripts": {
     "test:backend": "node scripts/tests_backend/run-all.mjs",

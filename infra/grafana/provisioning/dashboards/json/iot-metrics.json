@@ -1,0 +1,56 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Temperature (°C)",
+      "targets": [
+        { "expr": "avg(iot_temp_celsius)", "legendFormat": "avg temp" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "Humidity (%)",
+      "targets": [
+        { "expr": "avg(iot_humid_percent)", "legendFormat": "avg humid" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "Power (W) & Current (A)",
+      "targets": [
+        { "expr": "avg(iot_power_watts)", "legendFormat": "power" },
+        { "expr": "avg(iot_current_amperes)", "legendFormat": "current" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "graph",
+      "title": "Voltage (V) & Frequency (Hz)",
+      "targets": [
+        { "expr": "avg(iot_voltage_volts)", "legendFormat": "voltage" },
+        { "expr": "avg(iot_frequency_hz)", "legendFormat": "freq" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    },
+    {
+      "type": "graph",
+      "title": "Power Factor",
+      "targets": [
+        { "expr": "avg(iot_power_factor)", "legendFormat": "pf" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["iot"],
+  "timezone": "",
+  "title": "IoT Metrics",
+  "version": 1
+}
+

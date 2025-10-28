@@ -1,6 +1,7 @@
 // Kienlab HTTP multi-device polling adapter.
 // Polls per device: <KIENLAB_BASE>/api/raw/?length=-<LEN>&dev_id=<ID>
 // Optional auth via KIENLAB_AUTH_SCHEME/ KIENLAB_API_KEY
+const { updateIotMetrics } = require('../../metrics')
 
 function parseList(val) {
   return String(val || '')
@@ -134,6 +135,7 @@ function startKienlabHttp({ store }) {
         if (v == null || !Number.isFinite(Number(v))) continue
         store.addPoint(devId, k, Number(r.ts), Number(v))
       }
+      updateIotMetrics(r.values)
       if (Number(r.ts) > maxTs) maxTs = Number(r.ts)
     }
     if (maxTs > last) lastTsByDev.set(devId, maxTs)

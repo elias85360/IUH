@@ -37,7 +37,15 @@ function initMetrics(app) {
   if (!client) return false
   const register = client.register
   try {
-    client.collectDefaultMetrics({ register })
+    client.collectDefaultMetrics({ register })  
+    /* state.temp = new client.Gauge({ name: 'temp', help: 'Temperature in Celsius' })
+    state.humid = new client.Gauge({ name: 'humid', help: 'Humidity in %' })
+    state.U = new client.Gauge({ name: 'U', help: 'Voltage in Volts' })
+    state.I = new client.Gauge({ name: 'I', help: 'Current in Amperes' })
+    state.P = new client.Gauge({ name: 'P', help: 'Power in Watts' })
+    state.E = new client.Gauge({ name: 'E', help: 'Energy in Wh' })
+    state.F = new client.Gauge({ name: 'F', help: 'Frequency in Hz' })
+    state.pf = new client.Gauge({ name: 'pf', help: 'Power Factor' }) */
     state.httpDuration = new client.Histogram({
       name: 'http_request_duration_seconds',
       help: 'HTTP request duration in seconds',
@@ -49,7 +57,14 @@ function initMetrics(app) {
     state.httpErrors = new client.Counter({ name: 'http_errors_total', help: 'Total HTTP error responses', labelNames: ['method', 'route', 'status'] })
     state.cacheHits = new client.Counter({ name: 'cache_hits_total', help: 'Total cache hits', labelNames: ['route'] })
     state.cacheMisses = new client.Counter({ name: 'cache_misses_total', help: 'Total cache misses', labelNames: ['route'] })
-
+    state.temp = new client.Gauge({ name: 'iot_temp_celsius', help: 'IoT device temperature in Celsius' })
+    state.humid = new client.Gauge({ name: 'iot_humid_percent', help: 'IoT device humidity in percent' })
+    state.U = new client.Gauge({ name: 'iot_voltage_volts', help: 'IoT device voltage in Volts' })
+    state.I = new client.Gauge({ name: 'iot_current_amperes', help: 'IoT device current in Amperes' })
+    state.P = new client.Gauge({ name: 'iot_power_watts', help: 'IoT device power in Watts' })
+    state.E = new client.Gauge({ name: 'iot_energy_wh', help: 'IoT device energy in Watt-hours' })
+    state.F = new client.Gauge({ name: 'iot_frequency_hz', help: 'IoT device frequency in Hertz' })
+    state.pf = new client.Gauge({ name: 'iot_power_factor', help: 'IoT device power factor' })
     // Instrumentation middleware
     app.use((req, res, next) => {
       try { state.httpInFlight.inc() } catch {}
@@ -84,4 +99,24 @@ function recordCacheMiss(route) {
   if (client && state.cacheMisses) try { state.cacheMisses.inc({ route }) } catch {}
 }
 
-module.exports = { initMetrics, recordCacheHit, recordCacheMiss }
+function updateIotMetrics(data) {
+  if (!client || !state.enabled) return
+  try {
+    if (data.temp != null) state.temp.set(data.temp)
+    if (data.humid != null) state.humid.set(data.humid)
+    if (data.U != null) state.U.set(data.U)
+    if (data.I != null) state.I.set(data.I)
+    if (data.P != null) state.P.set(data.P)
+    if (data.E != null) state.E.set(data.E)
+    if (data.F != null) state.F.set(data.F)
+    if (data.pf != null) state.pf.set(data.pf)
+  } catch (e) { /* ignore */ }
+}
+
+
+module.exports = { 
+  initMetrics, 
+  recordCacheHit, 
+  recordCacheMiss,
+  updateIotMetrics 
+}
