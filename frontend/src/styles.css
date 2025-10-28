@@ -39,6 +39,11 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
 .stat-unit { color:#6b7280; font-size:16px; }
 .stat-sub { color:#9ca3af; font-size:12px; margin-top:4px; }
 .stat-icon { font-size: 24px; opacity:.8 }
+/* SLA band: small colored bar before the value */
+.sla-band { display:inline-block; width:10px; height:18px; border-radius:3px; margin-right:8px; vertical-align:middle; background: rgba(255,255,255,0.2); }
+.sla-band.ok { background: rgba(34,197,94,0.7); }
+.sla-band.warn { background: rgba(251,191,36,0.8); }
+.sla-band.crit { background: rgba(239,68,68,0.85); }
 
 .topbar-progress { position: fixed; top: 0; left: 0; right: 0; height: 3px; background: transparent; z-index: 1000; }
 

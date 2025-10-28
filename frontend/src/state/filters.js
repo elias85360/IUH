@@ -24,6 +24,7 @@ export const useUiStore = create((set, get) => ({
   selectedRoom: 'all',
   selectedTags: [],
   selectedDevices: [],
+  excludedDevices: [],
   searchDevice: '',
   // Live + viz options
   live: true,
@@ -46,6 +47,9 @@ export const useUiStore = create((set, get) => ({
   metrics: [],
   setDevices: (devices) => set({ devices }),
   setMetrics: (metrics) => set({ metrics }),
+  excludeDevice: (id) => set((s)=>({ excludedDevices: Array.from(new Set([...(s.excludedDevices||[]), id])) })),
+  includeDevice: (id) => set((s)=>({ excludedDevices: (s.excludedDevices||[]).filter(x => x!==id) })),
+  toggleExclude: (id) => set((s)=>{ const arr = new Set(s.excludedDevices||[]); if (arr.has(id)) arr.delete(id); else arr.add(id); return { excludedDevices: Array.from(arr) } }),
   setPeriodKey: (key) => {
     const p = PERIODS.find(p => p.key === key) || PERIODS[0]
     set({ period: p, anchorNow: Date.now() })

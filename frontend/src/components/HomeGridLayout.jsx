@@ -16,11 +16,22 @@ const defaultLayout = [
   { i: 'waterfall', x: 8, y: 14, w: 4, h: 6 },
   { i: 'corr', x: 0, y: 20, w: 4, h: 6 },
   { i: 'room', x: 4, y: 20, w: 8, h: 8 },
+  { i: 'anomalies', x: 0, y: 28, w: 6, h: 6 },
+  { i: 'health', x: 0, y: 28, w: 12, h: 6 },
 ]
 
+function readLayout() {
+  try {
+    const s = localStorage.getItem('home-layout')
+    if (!s) return defaultLayout
+    const arr = JSON.parse(s)
+    if (Array.isArray(arr) && arr.length) return arr
+    return defaultLayout
+  } catch { return defaultLayout }
+}
+
 export default function HomeGridLayout({ components }) {
-  // Fixed layout: ignore any saved user layout and do not persist changes
-  const layout = defaultLayout
+  const [layout, setLayout] = useState(readLayout())
 
   const layouts = { lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }
   const cols = { lg: 12, md: 12, sm: 12, xs: 12, xxs: 12 }
@@ -37,7 +48,7 @@ export default function HomeGridLayout({ components }) {
     const Comp = components[item.i]
     if (!Comp) return null
     return (
-      <div key={item.i} data-grid={item}>
+      <div key={item.i} data-grid={item} onContextMenu={(e)=>{ e.preventDefault(); try { window.location.assign('/devices') } catch {} }}>
         {Comp}
       </div>
     )
@@ -52,7 +63,7 @@ export default function HomeGridLayout({ components }) {
       breakpoints={breakpoints}
       rowHeight={rowHeight}
       margin={[isMobile?8:16, isMobile?8:16]}
-      // Fixed layout: no drag/resize, no persistence
+      // No drag/resize, but we can load presets via localStorage
       isDraggable={false}
       isResizable={false}
       draggableHandle=".panel-title"

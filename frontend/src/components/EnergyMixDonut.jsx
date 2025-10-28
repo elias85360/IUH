@@ -7,7 +7,7 @@ import SkeletonBox from './SkeletonBox.jsx'
 
 const COLORS = ['#5bbcff','#22c55e','#a78bfa','#f59e0b','#ef4444','#06b6d4']
 
-export default function EnergyMixDonut({ devices, by='device' }) {
+export default function EnergyMixDonut({ devices, by='device', onSlice }) {
   const { anchorNow, period } = useUiStore()
   const from = anchorNow - period.ms
   const to = anchorNow
@@ -21,7 +21,7 @@ export default function EnergyMixDonut({ devices, by='device' }) {
         // use helper with fallback P integration
         const rows = await fetchEnergyBuckets([d], from, to, bucketMs)
         const kwh = rows.reduce((s,r)=>s+r.kwh,0)
-        list.push({ name: d.name, value: Math.max(0, kwh) })
+        list.push({ id: d.id, name: d.name, value: Math.max(0, kwh) })
       }
       if (!cancel) setRows(list) 
     }
@@ -34,8 +34,8 @@ export default function EnergyMixDonut({ devices, by='device' }) {
       <div style={{flex:1, minHeight:0}}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={rows} dataKey="value" nameKey="name" innerRadius={60} outerRadius={90} paddingAngle={2}>
-              {rows.map((e,i)=>(<Cell key={i} fill={COLORS[i%COLORS.length]} />))}
+            <Pie data={rows} dataKey="value" nameKey="name" innerRadius={60} outerRadius={90} paddingAngle={2} onClick={(d)=>{ try { onSlice && onSlice(d?.payload?.id, 'P') } catch {} }}>
+              {rows.map((e,i)=>(<Cell key={i} fill={COLORS[i%COLORS.length]} cursor={onSlice? 'pointer' : 'default'} />))}
             </Pie>
             <Tooltip />
             <Legend />

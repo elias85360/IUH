@@ -1,27 +1,22 @@
-# Frontend (React + Vite)
+# Frontend
 
-Features:
-- Manual data loading (no auto fetch)
-- Global loading bar (NProgress)
-- Filters: period, types, metrics, room, devices
-- Device cards: KPIs + charts (Line/Area/Bar/Scatter) with Brush and threshold lines
-- KPI bar, Daily Consumption (7d), Compare Panel, Diagnostics
-- Socket.IO connection for real-time points and alerts
+Tech stack: React + Vite, React Router, React Query, Socket.IO client, Recharts.
 
-Run locally:  
-```
-cd frontend
-npm install
-npm run dev
-```
+Dev server:
 
-Env vars:
-  - `VITE_API_PROXY_TARGET` – dev proxy target for `/api` requests (defaults to `http://localhost:4000`).
-  - `VITE_REQUIRE_AUTH` – set to `1` to require authentication via OIDC. When set to `0`, the frontend will not attempt to configure OIDC and all users are considered anonymous.
-  - `VITE_DATA_SOURCE` – select the data source: `mock` runs the in‑memory generator, while `master` fetches real data from Kienlab via the `/kienlab` proxy. Use `master` for production or when Kienlab is reachable.
-  - `VITE_API_KEY` – optional bearer token if the backend enforces API keys or RBAC with API keys enabled.
-  - OIDC (Keycloak):
-    - `VITE_OIDC_ISSUER_URL` – e.g., `http://localhost:8080/realms/iot`. Must match your Keycloak realm’s issuer URL.
-    - `VITE_OIDC_CLIENT_ID` – e.g., `iot-dashboard`.
-    - `VITE_OIDC_REDIRECT_URI` – e.g., `http://localhost:5174`. Must correspond to one of the redirect URIs configured for the Keycloak client.
+- `vite.config.js` proxies:
+  - `/api`, `/metrics` → `VITE_API_PROXY_TARGET` (recommended `http://localhost`)
+  - `/kienlab` → `VITE_MASTER_PROXY_TARGET` (recommended `http://localhost` for parity)
+
+Environment variables (`frontend/.env`):
+
+- API/backend: `VITE_API_PROXY_TARGET`, `VITE_API_BASE` (optional explicit base)
+- Mode: `VITE_DATA_SOURCE` (empty → backend mode; `master` → direct Kienlab)
+- OIDC: `VITE_OIDC_ISSUER_URL`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_REDIRECT_URI`, `VITE_REQUIRE_AUTH`
+- Kienlab (master): `VITE_MASTER_BASE`, `VITE_KIENLAB_DEVICES`, `VITE_MASTER_PROXY_TARGET`, `VITE_LOG_MASTER`
+
+Auth flow:
+
+- PKCE Authorization Code via Keycloak
+- Redirect handled at `/auth/callback`
 

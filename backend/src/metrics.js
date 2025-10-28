@@ -12,6 +12,15 @@ const state = {
   httpErrors: null,
   cacheHits: null,
   cacheMisses: null,
+  cacheHitRatio: null,
+  pointsReturned: null,
+  socketConnections: null,
+  alertsTotal: null,
+  dataFreshness: null,
+  dataCompleteness: null,
+  dataGaps: null,
+  _hitsCount: 0,
+  _missesCount: 0,
 }
 
 function initMetrics(app) {
@@ -37,26 +46,26 @@ function initMetrics(app) {
   if (!client) return false
   const register = client.register
   try {
-    client.collectDefaultMetrics({ register })  
-    /* state.temp = new client.Gauge({ name: 'temp', help: 'Temperature in Celsius' })
-    state.humid = new client.Gauge({ name: 'humid', help: 'Humidity in %' })
-    state.U = new client.Gauge({ name: 'U', help: 'Voltage in Volts' })
-    state.I = new client.Gauge({ name: 'I', help: 'Current in Amperes' })
-    state.P = new client.Gauge({ name: 'P', help: 'Power in Watts' })
-    state.E = new client.Gauge({ name: 'E', help: 'Energy in Wh' })
-    state.F = new client.Gauge({ name: 'F', help: 'Frequency in Hz' })
-    state.pf = new client.Gauge({ name: 'pf', help: 'Power Factor' }) */
+    client.collectDefaultMetrics({ register })
     state.httpDuration = new client.Histogram({
       name: 'http_request_duration_seconds',
       help: 'HTTP request duration in seconds',
       labelNames: ['method', 'route', 'status'],
-      buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5]
+      // Tuned buckets: 50ms, 100ms, 200ms, 500ms, 1s, 2s, 5s
+      buckets: [0.05, 0.1, 0.2, 0.5, 1, 2, 5]
     })
     state.httpInFlight = new client.Gauge({ name: 'http_in_flight_requests', help: 'In-flight HTTP requests' })
     state.httpTotal = new client.Counter({ name: 'http_requests_total', help: 'Total HTTP requests', labelNames: ['method', 'route', 'status'] })
     state.httpErrors = new client.Counter({ name: 'http_errors_total', help: 'Total HTTP error responses', labelNames: ['method', 'route', 'status'] })
     state.cacheHits = new client.Counter({ name: 'cache_hits_total', help: 'Total cache hits', labelNames: ['route'] })
     state.cacheMisses = new client.Counter({ name: 'cache_misses_total', help: 'Total cache misses', labelNames: ['route'] })
+    state.cacheHitRatio = new client.Gauge({ name: 'cache_hit_ratio', help: 'Cache hit ratio (hits/(hits+misses))', labelNames: ['route'] })
+    state.pointsReturned = new client.Counter({ name: 'timeseries_points_returned_total', help: 'Total timeseries points returned', labelNames: ['route'] })
+    state.socketConnections = new client.Gauge({ name: 'socket_connections', help: 'Current Socket.IO connections' })
+    state.alertsTotal = new client.Counter({ name: 'alerts_total', help: 'Total alerts emitted', labelNames: ['level','metricKey'] })
+    state.dataFreshness = new client.Gauge({ name: 'data_freshness_seconds', help: 'Age of last point in seconds', labelNames: ['deviceId','metricKey'] })
+    state.dataCompleteness = new client.Gauge({ name: 'data_completeness_ratio', help: 'Completeness ratio over the evaluated window', labelNames: ['deviceId','metricKey'] })
+    state.dataGaps = new client.Gauge({ name: 'data_gaps', help: 'Number of missing buckets over the evaluated window', labelNames: ['deviceId','metricKey'] })
     state.temp = new client.Gauge({ name: 'iot_temp_celsius', help: 'IoT device temperature in Celsius' })
     state.humid = new client.Gauge({ name: 'iot_humid_percent', help: 'IoT device humidity in percent' })
     state.U = new client.Gauge({ name: 'iot_voltage_volts', help: 'IoT device voltage in Volts' })
@@ -93,10 +102,48 @@ function initMetrics(app) {
 }
 
 function recordCacheHit(route) {
-  if (client && state.cacheHits) try { state.cacheHits.inc({ route }) } catch {}
+  if (client && state.cacheHits) try {
+    state.cacheHits.inc({ route })
+    state._hitsCount++
+    const tot = state._hitsCount + state._missesCount
+    if (tot > 0 && state.cacheHitRatio) state.cacheHitRatio.set({ route }, state._hitsCount / tot)
+  } catch {}
 }
 function recordCacheMiss(route) {
-  if (client && state.cacheMisses) try { state.cacheMisses.inc({ route }) } catch {}
+  if (client && state.cacheMisses) try {
+    state.cacheMisses.inc({ route })
+    state._missesCount++
+    const tot = state._hitsCount + state._missesCount
+    if (tot > 0 && state.cacheHitRatio) state.cacheHitRatio.set({ route }, state._hitsCount / tot)
+  } catch {}
+}
+
+function recordPointsReturned(route, count) {
+  if (client && state.pointsReturned && Number.isFinite(Number(count))) try { state.pointsReturned.inc({ route }, Number(count)) } catch {}
+}
+
+function incSocketConnections() {
+  if (client && state.socketConnections) try { state.socketConnections.inc() } catch {}
+}
+
+function decSocketConnections() {
+  if (client && state.socketConnections) try { state.socketConnections.dec() } catch {}
+}
+
+function recordAlert(level, metricKey) {
+  if (client && state.alertsTotal) try { state.alertsTotal.inc({ level: String(level || 'unknown'), metricKey: String(metricKey || 'unknown') }) } catch {}
+}
+
+function updateDataQualityFromItems(items) {
+  if (!client || !Array.isArray(items)) return
+  try {
+    for (const it of items) {
+      const labels = { deviceId: String(it.deviceId || ''), metricKey: String(it.metricKey || '') }
+      if (state.dataFreshness && it.freshnessMs != null) state.dataFreshness.set(labels, Number(it.freshnessMs) / 1000)
+      if (state.dataCompleteness && it.completeness != null) state.dataCompleteness.set(labels, Number(it.completeness))
+      if (state.dataGaps && it.gaps != null) state.dataGaps.set(labels, Number(it.gaps))
+    }
+  } catch {}
 }
 
 function updateIotMetrics(data) {
@@ -114,9 +161,14 @@ function updateIotMetrics(data) {
 }
 
 
-module.exports = { 
-  initMetrics, 
-  recordCacheHit, 
+module.exports = {
+  initMetrics,
+  recordCacheHit,
   recordCacheMiss,
-  updateIotMetrics 
+  recordPointsReturned,
+  incSocketConnections,
+  decSocketConnections,
+  recordAlert,
+  updateDataQualityFromItems,
+  updateIotMetrics,
 }

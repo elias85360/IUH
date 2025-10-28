@@ -80,11 +80,12 @@ function buildApi({ app, store, mailer }) {
   });
 
   router.get("/kpis", requireRole('viewer', RBAC_ENFORCE), async (req, res) => withSpan('api.kpis', async () => {
+    const num = z.coerce.number().int()
     const schema = z.object({
       deviceId: z.string().min(1),
-      from: z.string().regex(/^\d+$/).optional(),
-      to: z.string().regex(/^\d+$/).optional(),
-    });
+      from: num.optional(),
+      to: num.optional(),
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parse = schema.safeParse(req.query);
     if (!parse.success) return res.status(400).json({ error: "invalid params", details: parse.error.errors });
     const { deviceId, from, to } = parse.data;
@@ -103,25 +104,26 @@ function buildApi({ app, store, mailer }) {
     let kpis
     const useTsdb = String(process.env.TSDB_READ || '').toLowerCase() === '1' && tsdb && tsdb.queryKpis
     if (useTsdb) {
-      try { kpis = await tsdb.queryKpis({ deviceId, from: from ? Number(from) : undefined, to: to ? Number(to) : undefined }) } catch {}
+      try { kpis = await tsdb.queryKpis({ deviceId, from, to }) } catch {}
     }
-    if (!kpis) kpis = store.getKpis({ deviceId, from: from ? Number(from) : undefined, to: to ? Number(to) : undefined });
+    if (!kpis) kpis = store.getKpis({ deviceId, from, to });
     const payload = { deviceId, kpis }
     const tag = weakEtag(payload); if (tag) res.setHeader('ETag', tag)
-    res.setHeader('Cache-Control', 'public, max-age=5')
+    res.setHeader('Cache-Control', 'private, max-age=5')
     await cacheSet(key, payload, 5)
     res.json(payload);
   }));
 
   router.get("/timeseries", requireRole('viewer', RBAC_ENFORCE), async (req, res) => withSpan('api.timeseries', async () => {
+    const num = z.coerce.number().int()
     const schema = z.object({
       deviceId: z.string().min(1),
       metricKey: z.string().min(1),
-      from: z.string().regex(/^\d+$/).optional(),
-      to: z.string().regex(/^\d+$/).optional(),
-      limit: z.string().regex(/^\d+$/).optional(),
-      bucketMs: z.string().regex(/^\d+$/).optional(),
-    });
+      from: num.optional(),
+      to: num.optional(),
+      limit: num.max(10000).optional(),
+      bucketMs: num.min(1000, { message: 'bucketMs must be >= 1000' }).optional(),
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parse = schema.safeParse(req.query);
     if (!parse.success) return res.status(400).json({ error: "invalid params", details: parse.error.errors });
     const { deviceId, metricKey, from, to, limit, bucketMs } = parse.data;
@@ -141,23 +143,26 @@ function buildApi({ app, store, mailer }) {
     let data
     if (useTsdb) {
       try {
-        data = await tsdb.querySeries({ deviceId, metricKey, from: from ? Number(from) : undefined, to: to ? Number(to) : undefined, bucketMs: bucketMs ? Number(bucketMs) : undefined })
+        data = await tsdb.querySeries({ deviceId, metricKey, from, to, bucketMs })
       } catch {}
     }
     if (!data) {
-      data = store.querySeries({
-        deviceId,
-        metricKey,
-        from: from ? Number(from) : undefined,
-        to: to ? Number(to) : undefined,
-        limit: limit ? Number(limit) : undefined,
-        bucketMs: bucketMs ? Number(bucketMs) : undefined,
-      });
+      data = store.querySeries({ deviceId, metricKey, from, to, limit, bucketMs });
+    }
+    // Server-side downsampling (stride) to cap points for UI
+    const MAX_POINTS = Math.max(100, Number(process.env.MAX_API_POINTS || 2000))
+    if (Array.isArray(data) && data.length > MAX_POINTS) {
+      const stride = Math.ceil(data.length / MAX_POINTS)
+      const ds = []
+      for (let i = 0; i < data.length; i += stride) ds.push(data[i])
+      if (ds[ds.length - 1]?.ts !== data[data.length - 1].ts) ds.push(data[data.length - 1])
+      data = ds
     }
     const payload = { deviceId, metricKey, points: data }
     const tag = weakEtag(payload); if (tag) res.setHeader('ETag', tag)
-    res.setHeader('Cache-Control', 'public, max-age=5')
+    res.setHeader('Cache-Control', 'private, max-age=5')
     await cacheSet(key, payload, 5)
+    try { require('./metrics').recordPointsReturned('/api/timeseries', Array.isArray(data) ? data.length : 0) } catch {}
     res.json(payload);
   }));
 
@@ -167,18 +172,19 @@ function buildApi({ app, store, mailer }) {
 
   // Data quality and health summary per device/metric
   router.get('/quality', requireRole('viewer', RBAC_ENFORCE), (req, res) => {
+    const num = z.coerce.number().int()
     const schema = z.object({
-      from: z.string().regex(/^\d+$/).optional(),
-      to: z.string().regex(/^\d+$/).optional(),
-      bucketMs: z.string().regex(/^\d+$/).optional(),
+      from: num.optional(),
+      to: num.optional(),
+      bucketMs: num.min(1000, { message: 'bucketMs must be >= 1000' }).optional(),
       detail: z.string().regex(/^[01]$/).optional(),
-    })
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parse = schema.safeParse(req.query)
     if (!parse.success) return res.status(400).json({ error: 'invalid params', details: parse.error.errors })
     const now = Date.now()
-    const from = parse.data.from ? Number(parse.data.from) : (now - 24*60*60*1000)
-    const to = parse.data.to ? Number(parse.data.to) : now
-    const bucketMs = parse.data.bucketMs ? Number(parse.data.bucketMs) : 60*60*1000
+    const from = parse.data.from != null ? parse.data.from : (now - 24*60*60*1000)
+    const to = parse.data.to != null ? parse.data.to : now
+    const bucketMs = parse.data.bucketMs != null ? parse.data.bucketMs : 60*60*1000
     const wantDetail = parse.data.detail === '1'
     const out = []
     for (const d of store.getDevices()) {
@@ -211,19 +217,94 @@ function buildApi({ app, store, mailer }) {
         out.push(item)
       }
     }
+    try { require('./metrics').updateDataQualityFromItems(out) } catch {}
     res.json({ from, to, bucketMs, items: out })
+  })
+
+  // ------- Admin: status and diagnostics -------
+  router.get('/admin/status', requireRole('admin', RBAC_ENFORCE), (_req, res) => {
+    const mask = (s) => (s ? (String(s).slice(0, 6) + '…') : '')
+    const env = process.env
+    res.json({
+      RBAC_ENFORCE: env.RBAC_ENFORCE === '1',
+      ALLOW_API_KEY_WITH_RBAC: env.ALLOW_API_KEY_WITH_RBAC === '1',
+      API_KEY_PRESENT: !!env.API_KEY,
+      API_HMAC_ENFORCE: env.API_HMAC_ENFORCE === '1',
+      API_HMAC_KEY_ID: env.API_HMAC_KEY_ID || null,
+      TSDB_READ: env.TSDB_READ === '1',
+      TSDB_MIRROR: env.TSDB_MIRROR === '1',
+      FORECAST_URL: !!env.FORECAST_URL,
+      DATA_SOURCE: env.DATA_SOURCE || 'mock',
+      ROUTE_SLACK: env.ROUTE_SLACK === '1',
+      ROUTE_WEBHOOK: env.ROUTE_WEBHOOK === '1',
+      SLACK_WEBHOOK_URL: mask(env.SLACK_WEBHOOK_URL),
+      WEBHOOK_URL: mask(env.WEBHOOK_URL),
+      SMTP_CONFIGURED: !!(env.SMTP_HOST && env.SMTP_PORT && env.ALERTS_FROM && env.ALERTS_TO),
+    })
+  })
+
+  // Require API key only (no RBAC) for ping to validate keys
+  router.get('/admin/ping', apiKeyMiddleware(!!process.env.API_KEY), (_req, res) => {
+    res.json({ ok: true })
+  })
+
+  // HMAC verification test (requires admin + valid HMAC if present)
+  router.post('/admin/hmac-test', hmacMiddleware(true), requireRole('admin', RBAC_ENFORCE), (_req, res) => {
+    res.json({ ok: true })
+  })
+
+  // ------- Alerts routing (Slack/Webhook) -------
+  router.get('/alerts/routing', requireRole('admin', RBAC_ENFORCE), (req, res) => {
+    try {
+      const routers = req.app.get('alertRouters')
+      if (!routers || !routers.get) return res.json({ routeSlack:false, routeWebhook:false })
+      res.json(routers.get())
+    } catch { res.json({ routeSlack:false, routeWebhook:false }) }
+  })
+  router.put('/alerts/routing', requireRole('admin', RBAC_ENFORCE), recordAudit('alerts.routing.update'), (req, res) => {
+    try {
+      const allowed = ['routeSlack','routeWebhook','slackWebhookUrl','slackChannel','webhookUrl']
+      const patch = {}
+      for (const k of allowed) if (k in (req.body||{})) patch[k] = req.body[k]
+      const routers = req.app.get('alertRouters')
+      if (!routers || !routers.update) return res.status(501).json({ error:'routing not available' })
+      const next = routers.update(patch)
+      res.json({ ok:true, routing: next })
+    } catch { res.status(500).json({ error:'update failed' }) }
+  })
+  router.post('/alerts/test', requireRole('admin', RBAC_ENFORCE), recordAudit('alerts.test'), async (req, res) => {
+    try {
+      const routers = req.app.get('alertRouters')
+      if (!routers || !routers.sendAlert) return res.status(501).json({ error:'routing not available' })
+      const now = Date.now()
+      const payload = { deviceId: req.body?.deviceId || 'test-device', metricKey: req.body?.metricKey || 'P', ts: now, value: Number(req.body?.value || 1), level: req.body?.level || 'warn' }
+      await routers.sendAlert(payload)
+      res.json({ ok:true })
+    } catch (e) { res.status(500).json({ error:'send failed' }) }
+  })
+
+  // Test SMTP (sends a simple message to ALERTS_TO)
+  router.post('/test/smtp', requireRole('admin', RBAC_ENFORCE), async (req, res) => {
+    try {
+      if (!mailer) return res.status(501).json({ error: 'mailer not configured' })
+      const to = String(process.env.ALERTS_TO || '').split(',').map(s=>s.trim()).filter(Boolean)[0]
+      if (!to) return res.status(400).json({ error: 'ALERTS_TO not set' })
+      await mailer.sendAlertEmail({ deviceId: 'test', metricKey: 'test', ts: Date.now(), value: 0, level: 'warn', message: 'SMTP test message' })
+      res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: 'send failed', details: String(e.message||e) }) }
   })
 
   // Forecast endpoint: uses FORECAST_URL if available, otherwise linear forecast fallback
   router.get('/forecast', requireRole('viewer', RBAC_ENFORCE), async (req, res) => {
+    const num = z.coerce.number().int()
     const schema = z.object({
       deviceId: z.string().min(1),
       metricKey: z.string().min(1),
-      from: z.string().regex(/^\d+$/).optional(),
-      to: z.string().regex(/^\d+$/).optional(),
-      horizon: z.string().regex(/^\d+$/).optional(),
-      step: z.string().regex(/^\d+$/).optional(),
-    })
+      from: num.optional(),
+      to: num.optional(),
+      horizon: num.optional(),
+      step: num.min(1000, { message: 'step must be >= 1000' }).optional(),
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parse = schema.safeParse(req.query)
     if (!parse.success) return res.status(400).json({ error: 'invalid params', details: parse.error.errors })
     const { deviceId, metricKey, from, to, horizon, step } = parse.data
@@ -231,13 +312,13 @@ function buildApi({ app, store, mailer }) {
       const useTsdb = String(process.env.TSDB_READ || '').toLowerCase() === '1' && tsdb && tsdb.querySeries
       let data
       if (useTsdb) {
-        data = await tsdb.querySeries({ deviceId, metricKey, from: from?Number(from):undefined, to: to?Number(to):undefined })
+        data = await tsdb.querySeries({ deviceId, metricKey, from, to })
       } else {
-        data = store.querySeries({ deviceId, metricKey, from: from?Number(from):undefined, to: to?Number(to):undefined })
+        data = store.querySeries({ deviceId, metricKey, from, to })
       }
       const series = (data || []).map(p => ({ ts: Number(p.ts), value: Number(p.value) }))
-      const H = horizon ? Number(horizon) : 60*60*1000
-      const S = step ? Number(step) : (series.length>1 ? (series[series.length-1].ts - series[series.length-2].ts) : 60*1000)
+      const H = horizon ? horizon : 60*60*1000
+      const S = step ? step : (series.length>1 ? (series[series.length-1].ts - series[series.length-2].ts) : 60*1000)
       if (process.env.FORECAST_URL) {
         try {
           const url = new URL('/forecast', process.env.FORECAST_URL)
@@ -263,12 +344,13 @@ function buildApi({ app, store, mailer }) {
 
   // Export simple KPIs PDF for a device (requires pdfkit installed for 200 OK)
   router.get('/export.pdf', requireRole('analyst', RBAC_ENFORCE), recordAudit('export.pdf'), async (req, res) => {
+    const num = z.coerce.number().int()
     const schema = z.object({
       deviceId: z.string().min(1),
-      from: z.string().regex(/^\d+$/).optional(),
-      to: z.string().regex(/^\d+$/).optional(),
+      from: num.optional(),
+      to: num.optional(),
       title: z.string().optional(),
-    })
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parse = schema.safeParse(req.query)
     if (!parse.success) return res.status(400).json({ error: 'invalid params', details: parse.error.errors })
     if (!pdf || !pdf.hasPdf || !pdf.hasPdf()) return res.status(501).json({ error: 'pdf export not enabled (install pdfkit)' })
@@ -276,9 +358,9 @@ function buildApi({ app, store, mailer }) {
     let kpis
     const useTsdb = String(process.env.TSDB_READ || '').toLowerCase() === '1' && tsdb && tsdb.queryKpis
     if (useTsdb) {
-      try { kpis = await tsdb.queryKpis({ deviceId, from: from ? Number(from) : undefined, to: to ? Number(to) : undefined }) } catch {}
+      try { kpis = await tsdb.queryKpis({ deviceId, from, to }) } catch {}
     }
-    if (!kpis) kpis = store.getKpis({ deviceId, from: from ? Number(from) : undefined, to: to ? Number(to) : undefined })
+    if (!kpis) kpis = store.getKpis({ deviceId, from, to })
     try {
       const buf = await pdf.buildKpiPdf({ title: title || 'IoT KPIs', device: deviceId, kpis, from, to })
       res.setHeader('Content-Type', 'application/pdf')
@@ -311,20 +393,21 @@ function buildApi({ app, store, mailer }) {
   });
 
   router.get("/export.csv", requireRole('analyst', RBAC_ENFORCE), recordAudit('export.csv'), (req, res) => {
+    const num = z.coerce.number().int()
     const schema = z.object({
       deviceId: z.string().min(1),
       metricKey: z.string().min(1),
-      from: z.string().regex(/^\d+$/).optional(),
-      to: z.string().regex(/^\d+$/).optional(),
-    });
+      from: num.optional(),
+      to: num.optional(),
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parse = schema.safeParse(req.query);
     if (!parse.success) return res.status(400).json({ error: "invalid params", details: parse.error.errors });
     const { deviceId, metricKey, from, to } = parse.data;
     const points = store.querySeries({
       deviceId,
       metricKey,
-      from: from ? Number(from) : undefined,
-      to: to ? Number(to) : undefined,
+      from,
+      to,
     });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename=export_${deviceId}_${metricKey}.csv`);

@@ -7,12 +7,6 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "use:dev": "node scripts/switch-env.js dev",
-    "use:prod": "node scripts/switch-env.js prod",
-    "dev:dev": "npm run use:dev && npm run dev",
-    "dev:prod": "npm run use:prod && npm run dev",
-    "build:dev": "npm run use:dev && npm run build",
-    "build:prod": "npm run use:prod && npm run build",
     "test": "vitest run"
   },
   "dependencies": {

@@ -14,11 +14,29 @@
     },
     {
       "type": "graph",
-      "title": "HTTP Duration p95",
+      "title": "Requests by route",
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+        { "expr": "sum(rate(http_requests_total[1m])) by (route)", "legendFormat": "{{route}}" }
       ],
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "HTTP Duration Quantiles (global)",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "graph",
+      "title": "Latency p95 by route",
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))", "legendFormat": "{{route}}" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
     },
     {
       "type": "graph",
@@ -26,7 +44,7 @@
       "targets": [
         { "expr": "sum(rate(http_errors_total[1m]))", "legendFormat": "errors" }
       ],
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
     },
     {
       "type": "graph",
@@ -35,7 +53,87 @@
         { "expr": "sum(rate(cache_hits_total[1m]))", "legendFormat": "hits" },
         { "expr": "sum(rate(cache_misses_total[1m]))", "legendFormat": "misses" }
       ],
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+    },
+    {
+      "type": "graph",
+      "title": "Success rate by route",
+      "targets": [
+        { "expr": "1 - (sum(rate(http_errors_total[5m])) by (route) / sum(rate(http_requests_total[5m])) by (route))", "legendFormat": "{{route}}" }
+      ],
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+    },
+    {
+      "type": "graph",
+      "title": "Errors by route",
+      "targets": [
+        { "expr": "sum(rate(http_errors_total[1m])) by (route)", "legendFormat": "{{route}}" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+    },
+    {
+      "type": "graph",
+      "title": "Cache hit ratio",
+      "targets": [
+        { "expr": "avg(cache_hit_ratio)", "legendFormat": "ratio" }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+    },
+    {
+      "type": "graph",
+      "title": "Timeseries points returned (rate)",
+      "targets": [
+        { "expr": "sum(rate(timeseries_points_returned_total[1m]))", "legendFormat": "points/s" }
+      ],
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32}
+    },
+    {
+      "type": "stat",
+      "title": "Socket connections",
+      "targets": [
+        { "expr": "socket_connections", "legendFormat": "connections" }
+      ],
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 40}
+    },
+    {
+      "type": "graph",
+      "title": "HTTP in flight",
+      "targets": [
+        { "expr": "http_in_flight_requests", "legendFormat": "in-flight" }
+      ],
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 40}
+    },
+    {
+      "type": "graph",
+      "title": "Alerts rate by level",
+      "targets": [
+        { "expr": "sum(rate(alerts_total[1m])) by (level)", "legendFormat": "{{level}}" }
+      ],
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 40}
+    },
+    {
+      "type": "graph",
+      "title": "Process RSS (bytes)",
+      "targets": [
+        { "expr": "process_resident_memory_bytes", "legendFormat": "rss" }
+      ],
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 46}
+    },
+    {
+      "type": "graph",
+      "title": "CPU seconds (rate)",
+      "targets": [
+        { "expr": "sum(rate(process_cpu_user_seconds_total[1m]) + rate(process_cpu_system_seconds_total[1m]))", "legendFormat": "cpu" }
+      ],
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 46}
+    },
+    {
+      "type": "graph",
+      "title": "Event loop lag (avg)",
+      "targets": [
+        { "expr": "avg(nodejs_eventloop_lag_seconds)", "legendFormat": "lag" }
+      ],
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 46}
     }
   ],
   "schemaVersion": 38,

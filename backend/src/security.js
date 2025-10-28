@@ -5,6 +5,8 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+let Redis = null
+try { Redis = require('ioredis') } catch { Redis = null }
 
 function isLikelyJwt(token) {
   return typeof token === 'string' && token.split('.').length === 3
@@ -107,6 +109,24 @@ function constantTimeEqual(a, b) {
   return crypto.timingSafeEqual(A, B);
 }
 
+function canonicalPathWithSortedQuery(pathWithQuery) {
+  try {
+    const raw = String(pathWithQuery || '')
+    const [path, q] = raw.split('?')
+    if (!q) return path || '/'
+    const usp = new URLSearchParams(q)
+    const pairs = []
+    for (const [k, v] of usp.entries()) pairs.push([k, v])
+    pairs.sort((a, b) => a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : (a[0] < b[0] ? -1 : 1))
+    const enc = pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')
+    return enc ? `${path || '/'}?${enc}` : (path || '/')
+  } catch { return String(pathWithQuery || '') }
+}
+
+function sha256Hex(text) {
+  return crypto.createHash('sha256').update(text || '').digest('hex')
+}
+
 function verifyHmac({ method, pathWithQuery, bodyText, dateStr, keyId, signatureHex, maxSkewMs = 5 * 60 * 1000 }) {
   if (!keyId || !signatureHex || !dateStr) return { ok: false, reason: 'missing headers' };
   const secret = getHmacSecret(keyId);
@@ -115,9 +135,11 @@ function verifyHmac({ method, pathWithQuery, bodyText, dateStr, keyId, signature
   if (!Number.isFinite(ts)) return { ok: false, reason: 'bad date' };
   const skew = Math.abs(Date.now() - ts);
   if (skew > maxSkewMs) return { ok: false, reason: 'clock skew' };
-  const payload = [String(method || '').toUpperCase(), String(pathWithQuery || ''), dateStr, bodyText || ''].join('\n');
+  const canonPath = canonicalPathWithSortedQuery(String(pathWithQuery || ''))
+  const bodyHash = sha256Hex(bodyText || '')
+  const payload = [String(method || '').toUpperCase(), canonPath, dateStr, bodyHash].join('\n');
   const h = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  const ok = constantTimeEqual(h, signatureHex.toLowerCase());
+  const ok = constantTimeEqual(h, String(signatureHex).toLowerCase());
   return ok ? { ok: true } : { ok: false, reason: 'mismatch' };
 }
 
@@ -127,6 +149,7 @@ function hmacMiddleware(enforce = false) {
     const keyId = String(req.headers['x-api-key-id'] || '');
     const signature = String(req.headers['x-api-signature'] || '');
     const dateStr = String(req.headers['x-api-date'] || '');
+    const nonce = String(req.headers['x-api-nonce'] || '');
     const bodyText = req.method === 'GET' || req.method === 'HEAD' ? '' : JSON.stringify(req.body || {});
     if (!keyId || !signature || !dateStr) {
       if (enforce) return res.status(401).json({ error: 'hmac required' });
@@ -134,6 +157,17 @@ function hmacMiddleware(enforce = false) {
     }
     const check = verifyHmac({ method: req.method, pathWithQuery: req.originalUrl, bodyText, dateStr, keyId, signatureHex: signature });
     if (!check.ok) return res.status(403).json({ error: 'invalid signature', reason: check.reason });
+    // Optional anti-replay via nonce store
+    const requireNonce = String(process.env.API_HMAC_NONCE_ENFORCE || '0') === '1'
+    const ttlMs = Number(process.env.API_HMAC_NONCE_TTL_MS || 5 * 60 * 1000)
+    if (requireNonce) {
+      if (!nonce) return res.status(401).json({ error: 'nonce required' })
+      checkAndStoreNonce(keyId, nonce, ttlMs).then((ok)=>{
+        if (!ok) return res.status(409).json({ error: 'replay detected' })
+        return next()
+      }).catch(()=> res.status(500).json({ error: 'nonce check failed' }))
+      return
+    }
     return next();
   };
 }
@@ -328,3 +362,34 @@ function requireRole(role, enforce = false) {
 
 module.exports.requireAuth = requireAuth;
 module.exports.requireRole = requireRole;
+
+// -------- Nonce store (Redis preferred, in-memory fallback) --------
+const nonceMem = new Map() // key -> exp
+let redisClient = null
+function getRedisClient() {
+  if (redisClient !== null) return redisClient
+  try {
+    if (!process.env.REDIS_URL || !Redis) { redisClient = false; return null }
+    redisClient = new Redis(process.env.REDIS_URL, { lazyConnect: true })
+    redisClient.on('error', () => {})
+    return redisClient
+  } catch { redisClient = false; return null }
+}
+
+async function checkAndStoreNonce(keyId, nonce, ttlMs) {
+  const key = `hmac:nonce:${String(keyId)}:${String(nonce)}`
+  const r = getRedisClient()
+  if (r) {
+    try {
+      // SET key value NX PX ttlMs -> returns 'OK' if set
+      const ok = await r.set(key, '1', 'PX', Math.max(1, ttlMs), 'NX')
+      return ok === 'OK'
+    } catch { /* ignore and fallback */ }
+  }
+  const now = Date.now()
+  // cleanup
+  for (const [k, exp] of nonceMem) { if (exp <= now) nonceMem.delete(k) }
+  if (nonceMem.has(key)) return false
+  nonceMem.set(key, now + ttlMs)
+  return true
+}

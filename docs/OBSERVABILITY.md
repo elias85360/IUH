@@ -1,7 +1,24 @@
 # Observability
 
-- Metrics: Prometheus scrape `/metrics` on API; include request latency, rate, errors, cache hit ratio, queue lengths.
-- Traces: OpenTelemetry exporter to OTLP endpoint; trace API calls, DB queries, cache, and external calls.
-- Logs: Structured JSON; correlation IDs; PII scrubbing; centralize (Loki/ELK).
-- Dashboards: Grafana panels for traffic, p95 latency, error rate, anomaly rate, export activity.
-- Alerts: SLO-based alerts; anomaly spike; data freshness; queue backlog; auth failure rate.
+Metrics:
+
+- `prom-client` exposes `/metrics` on the API
+- Counters: requests, errors, cache hits/misses, points returned
+- Histograms: latency per route
+
+Traces:
+
+- OpenTelemetry hooks present; wire exporter if needed (`backend/src/otel.js`)
+
+Logs:
+
+- morgan combined logs; add JSON logger for prod if required
+
+Dashboards:
+
+- Grafana provisioning mounted from `infra/grafana/provisioning`
+
+Alerts:
+
+- Email/Slack/Webhook via backend `notify` wiring (thresholds emit events)
+

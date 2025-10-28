@@ -23,6 +23,8 @@ export default function DeviceSummaryCard({ device }) {
   const to = anchorNow
   const [series, setSeries] = useState({ P: [], U: [], temp: [], pf: [], E: [] })
   const { getThreshold } = useSettings()
+  const [effTh, setEffTh] = useState(null)
+  useEffect(()=>{ let cancel=false; (async()=>{ try { const r = await api.thresholdsEffective(device.id); if (!cancel) setEffTh(r.thresholds||null) } catch {} })(); return ()=>{ cancel=true } }, [device.id])
 
   useEffect(()=>{
     let cancel=false
@@ -55,6 +57,8 @@ export default function DeviceSummaryCard({ device }) {
 
   const statsP = computeStats(series.P)
   const fmt = (ts) => format(new Date(ts), 'HH:mm')
+  const lastTs = series.P.length ? series.P[series.P.length-1].ts : null
+  function fmtAge(ms){ if (ms==null) return '—'; const s=Math.floor(ms/1000); if(s<60) return s+'s'; const m=Math.floor(s/60); if(m<60) return m+'m'; const h=Math.floor(m/60); return h+'h' }
 
   // Compute latest values and levels
   const latest = {
@@ -65,7 +69,7 @@ export default function DeviceSummaryCard({ device }) {
   }
   function levelFor(metric, value){
     if (value==null) return 'ok'
-    const th = getThreshold(device.id, metric) || {}
+    const th = (effTh && effTh[metric]) || getThreshold(device.id, metric) || {}
     if (metric==='pf' && th?.direction==='below'){
       if (th.crit!=null && value<=th.crit) return 'crit'
       if (th.warn!=null && value<=th.warn) return 'warn'
@@ -92,6 +96,11 @@ export default function DeviceSummaryCard({ device }) {
           <span className={`status-chip ${overall}`}>{overall.toUpperCase()}</span>
         </div>
         <div className="device-room">{room}</div>
+        <div className="row" style={{gap:6, alignItems:'center'}}>
+          <span className="muted">Freshness</span>
+          <span className={`status-chip ${lastTs && (anchorNow-lastTs>6*60*60*1000)?'crit': (lastTs && (anchorNow-lastTs>60*60*1000)?'warn':'ok')}`}>{fmtAge(lastTs? anchorNow-lastTs : null)}</span>
+          {(!lastTs) && <span className="badge" title="No data in window">Missing</span>}
+        </div>
         <div className="device-tags">
           {tags.map(t => <span key={t} className="tag">{t}</span>)}
         </div>

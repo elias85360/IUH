@@ -2,6 +2,7 @@ const http = require('http')
 const express = require('express')
 const cors = require('cors')
 const morgan = require('morgan')
+const compression = require('compression')
 require('dotenv').config()
 
 const config = require('./config')
@@ -10,7 +11,7 @@ const { buildApi } = require('./api')
 const { attachSocket } = require('./socket')
 const { startIngestion } = require('./sources')
 const { applySecurity } = require('./security')
-const { createMailerFromEnv } = require('./notify')
+const { createMailerFromEnv, createRoutersFromEnv } = require('./notify')
 const { initMetrics } = require('./metrics')
 
 function main() { 
@@ -47,7 +48,10 @@ function main() {
 
   applySecurity(app)
   app.use(morgan('combined'))
-  app.use(express.json())
+  // Compression and body limits
+  app.use(compression())
+  app.use(express.json({ limit: '200kb' }))
+  app.use(express.urlencoded({ extended: false, limit: '200kb' }))
 
   // Allow overriding device list from KIENLAB_DEVICES for external ingestion
   let devices = config.devices
@@ -58,14 +62,14 @@ function main() {
   } catch {}
   const store = new DataStore({ devices, metrics: config.metrics })
   const mailer = createMailerFromEnv()
+  const routers = createRoutersFromEnv()
+  app.set('alertRouters', routers)
   buildApi({ app, store, mailer })
 
   // Start ingestion (mock/http/ws/mqtt) and optional emailer
   const gen = startIngestion({ store, config })
   const stopGen = () => { try { if (gen && typeof gen.stop === 'function') gen.stop() } catch {} }
-  process.on('SIGINT', stopGen)
-  process.on('SIGTERM', stopGen)
-  if (mailer) {
+  if (mailer || routers) {
     const minLevel = String(process.env.ALERTS_MIN_LEVEL || 'crit').toLowerCase()
     const rank = { ok: 0, warn: 1, crit: 2 }
     const cooldownMs = Math.max(0, Number(process.env.ALERTS_COOLDOWN_SECONDS || 300) * 1000)
@@ -79,7 +83,8 @@ function main() {
         const now = Date.now()
         const prev = lastSent.get(key) || 0
         if (cooldownMs && now - prev < cooldownMs) return
-        await mailer.sendAlertEmail(payload)
+        if (mailer) await mailer.sendAlertEmail(payload)
+        if (routers && routers.sendAlert) await routers.sendAlert(payload)
         lastSent.set(key, now)
       } catch (e) { /* ignore */ }
     })
@@ -105,9 +110,17 @@ function main() {
   // Bind with retry using a fresh server per attempt
   const startPort = Number(process.env.PORT || config.server.port || 4000)
   const maxTries = 10
+  let currentServer = null
+  let io = null
   function bind(p, triesLeft) {
     const server = http.createServer(app)
-    attachSocket({ server, store, corsOrigin: config.server.corsOrigin })
+    // HTTP server timeouts
+    try {
+      server.requestTimeout = 60_000
+      server.headersTimeout = 65_000
+      server.keepAliveTimeout = 61_000
+    } catch {}
+    io = attachSocket({ server, store, corsOrigin: config.server.corsOrigin })
     server.once('error', (err) => {
       if (err && err.code === 'EADDRINUSE' && triesLeft > 0) {
         console.warn(`Port ${p} in use, trying ${p + 1}...`)
@@ -121,9 +134,30 @@ function main() {
     server.listen(p, () => {
       console.log(`Backend listening on http://localhost:${p}`)
       if (!process.env.PORT) process.env.PORT = String(p)
+      currentServer = server
     })
   }
   bind(startPort, maxTries)
+
+  // Graceful shutdown
+  async function shutdown() {
+    console.log('Shutting down gracefully...')
+    // Stop generators and timers
+    try { stopGen() } catch {}
+    // Close Socket.IO
+    try { if (io && typeof io.close === 'function') io.close(() => {}) } catch {}
+    // Close HTTP server
+    const srv = currentServer
+    if (srv) {
+      await new Promise((resolve) => {
+        try { srv.close(() => resolve()) } catch { resolve() }
+      })
+    }
+    // Fallback hard-exit timer
+    setTimeout(() => { process.exit(0) }, 10000)
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
 
 main()

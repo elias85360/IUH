@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api.js'
 import { useUiStore } from '../state/filters.js'
+import { useAssets } from '../state/assets.js'
 
 function fmtMs(ms) {
   if (ms == null) return '—'
@@ -15,11 +16,13 @@ function fmtMs(ms) {
 }
 
 export default function DataHealth() {
-  const { period, anchorNow, devices: storeDevices } = useUiStore()
+  const { period, anchorNow, devices: storeDevices, excludedDevices, toggleExclude } = useUiStore()
+  const { meta, setMeta } = useAssets()
   const [rows, setRows] = useState([])
   const [bucketMs, setBucketMs] = useState(60*60*1000)
   const [metricFilter, setMetricFilter] = useState('')
   const [deviceFilter, setDeviceFilter] = useState('')
+  const [sortMode, setSortMode] = useState('worst') // worst|freshness|completeness
   const from = useMemo(()=>anchorNow - period.ms, [anchorNow, period])
   const to = useMemo(()=>anchorNow, [anchorNow])
 
@@ -48,6 +51,20 @@ export default function DataHealth() {
 
   const filtered = useMemo(()=> rows.filter(r => (!metricFilter || r.metricKey===metricFilter) && (!deviceFilter || r.deviceId===deviceFilter)), [rows, metricFilter, deviceFilter])
 
+  const sorted = useMemo(()=>{
+    const arr = filtered.slice()
+    if (sortMode === 'freshness') {
+      arr.sort((a,b)=> (b.freshnessMs||0) - (a.freshnessMs||0))
+    } else if (sortMode === 'completeness') {
+      arr.sort((a,b)=> (a.completeness||0) - (b.completeness||0))
+    } else {
+      // worst-first: combine freshness and incompleteness
+      const score = (r) => (r.freshnessMs==null? 1e12 : r.freshnessMs) + (1 - (r.completeness||0)) * 1e9
+      arr.sort((a,b)=> score(b) - score(a))
+    }
+    return arr
+  }, [filtered, sortMode])
+
   const freshnessAlerts = useMemo(()=> filtered
     .map(r => ({
       ...r,
@@ -60,6 +77,26 @@ export default function DataHealth() {
   return (
     <div className="panel">
       <div className="panel-title">Santé des données</div>
+      <div className="row" style={{gap:8, margin:'8px 0'}}>
+        <button className="btn" onClick={()=>{
+          try {
+            const header = ['deviceId','deviceName','metricKey','unit','lastTs','freshnessMs','completeness','gaps']
+            const lines = [header.join(',')]
+            for (const r of filtered) {
+              lines.push([r.deviceId, JSON.stringify(r.deviceName||''), r.metricKey, r.unit||'', r.lastTs||'', r.freshnessMs||'', r.completeness||'', r.gaps||''].join(','))
+            }
+            const blob = new Blob([lines.join('\n')], { type: 'text/csv' }); const url = URL.createObjectURL(blob)
+            const a = document.createElement('a'); a.href = url; a.download = 'data_health.csv'; a.click(); URL.revokeObjectURL(url)
+          } catch {}
+        }}>Export CSV</button>
+        <button className="btn" onClick={()=>{
+          try {
+            const payload = { from, to, bucketMs, items: filtered }
+            const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' }); const url = URL.createObjectURL(blob)
+            const a = document.createElement('a'); a.href = url; a.download = 'data_health.json'; a.click(); URL.revokeObjectURL(url)
+          } catch {}
+        }}>Export JSON</button>
+      </div>
       <div className="row" style={{gap:12, marginBottom:12, flexWrap:'wrap'}}>
         <label className="row" style={{gap:6}}>
           Bucket
@@ -70,6 +107,14 @@ export default function DataHealth() {
           </select>
         </label>
         <span className="badge">Période: {new Date(from).toLocaleString()} → {new Date(to).toLocaleString()}</span>
+        <label className="row" style={{gap:6}}>
+          Sort
+          <select className="select" value={sortMode} onChange={(e)=>setSortMode(e.target.value)}>
+            <option value="worst">Worst first</option>
+            <option value="freshness">By freshness</option>
+            <option value="completeness">By completeness</option>
+          </select>
+        </label>
         <label className="row" style={{gap:6}}>
           Metric
           <select className="select" value={metricFilter} onChange={(e)=>setMetricFilter(e.target.value)}>
@@ -110,10 +155,11 @@ export default function DataHealth() {
               <th>Fraîcheur</th>
               <th>Complétude</th>
               <th>Gaps</th>
+              <th>Exclude</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, idx) => {
+            {sorted.map((r, idx) => {
               const pct = Math.round((r.completeness||0)*100)
               const freshness = r.freshnessMs
               let cls = 'ok'
@@ -121,9 +167,10 @@ export default function DataHealth() {
                 if (freshness > 6*60*60*1000) cls = 'crit'
                 else if (freshness > 60*60*1000) cls = 'warn'
               }
+              const isExcluded = !!meta[r.deviceId]?.exclude || (excludedDevices||[]).includes(r.deviceId)
               return (
                 <tr key={r.deviceId + '-' + r.metricKey + '-' + idx}>
-                  <td>{r.deviceName || r.deviceId}</td>
+                  <td><a className="link" href={`/devices/${encodeURIComponent(r.deviceId)}?metric=${encodeURIComponent(r.metricKey)}`}>{r.deviceName || r.deviceId}</a></td>
                   <td>{r.metricKey} {r.unit? '(' + r.unit + ')' : ''}</td>
                   <td>{r.lastTs? new Date(r.lastTs).toLocaleString() : '—'}</td>
                   <td><span className={'status-chip ' + cls}>{fmtMs(freshness)}</span></td>
@@ -136,6 +183,19 @@ export default function DataHealth() {
                     </div>
                   </td>
                   <td>{r.gaps}</td>
+                  <td>
+                    <label className="row" style={{gap:6}}>
+                      <input type="checkbox" checked={isExcluded} onChange={async (e)=>{
+                        const v = e.target.checked
+                        try {
+                          toggleExclude(r.deviceId)
+                          await api.putAssetsMeta({ [r.deviceId]: { exclude: v } }, false)
+                          // optimistic update in assets store
+                          setMeta(r.deviceId, { exclude: v })
+                        } catch {}
+                      }} /> Exclude from dashboards
+                    </label>
+                  </td>
                 </tr>
               )
             })}

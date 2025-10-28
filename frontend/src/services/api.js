@@ -7,6 +7,7 @@ const API_KEY = import.meta.env.VITE_API_KEY || ''
 const HMAC_KEY_ID = import.meta.env.VITE_API_HMAC_KEY_ID || ''
 const HMAC_SECRET = import.meta.env.VITE_API_HMAC_SECRET || ''
 let resolvedBase = null
+const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 10000)
 // Global concurrency limiter to avoid exhausting browser resources
 const MAX_CONCURRENCY = 8
 let inFlight = 0
@@ -26,21 +27,41 @@ function hmacHeaders(method, path, bodyText) {
   try {
     const algo = 'SHA-256'
     const date = new Date().toUTCString()
-    const payload = [method.toUpperCase(), path, date, bodyText || ''].join('\n')
+    // Compute body SHA-256 hex for canonical payload
     const enc = new TextEncoder()
+    const bodyBytes = enc.encode(bodyText || '')
+    const bodyHashPromise = crypto?.subtle?.digest ? crypto.subtle.digest('SHA-256', bodyBytes).then(buf => Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,'0')).join('')) : Promise.resolve('')
+    const payloadPromise = bodyHashPromise.then(bh => [method.toUpperCase(), path, date, bh].join('\n'))
     const keyData = enc.encode(HMAC_SECRET)
+    const nonce = (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2))
     if (crypto?.subtle?.importKey) {
       return crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: algo }, false, ['sign'])
-        .then(k => crypto.subtle.sign('HMAC', k, enc.encode(payload)))
+        .then(async (k) => {
+          const payload = await payloadPromise
+          return crypto.subtle.sign('HMAC', k, enc.encode(payload))
+        })
         .then(sig => {
           const b = new Uint8Array(sig)
           const hex = Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('')
-          return { 'x-api-key-id': HMAC_KEY_ID, 'x-api-date': date, 'x-api-signature': hex }
+          return { 'x-api-key-id': HMAC_KEY_ID, 'x-api-date': date, 'x-api-signature': hex, 'x-api-nonce': nonce }
         })
         .catch(() => ({}))
     }
   } catch {} 
   return {}
+}
+
+function canonicalizePath(path) {
+  try {
+    const [p, q] = String(path || '').split('?')
+    if (!q) return p || '/'
+    const usp = new URLSearchParams(q)
+    const pairs = []
+    for (const [k, v] of usp.entries()) pairs.push([k, v])
+    pairs.sort((a, b) => a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : (a[0] < b[0] ? -1 : 1))
+    const enc = pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')
+    return enc ? `${p || '/'}?${enc}` : (p || '/')
+  } catch { return path || '/' }
 }
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)) }
@@ -49,13 +70,18 @@ async function tryFetch(base, path, params) {
   const url = `${base}${path}`
   const method = (params && params.method) || 'GET'
   const bodyText = params && typeof params.body === 'string' ? params.body : ''
-  const extraHmac = await hmacHeaders(method, path, bodyText)
+  const canon = canonicalizePath(path)
+  const extraHmac = await hmacHeaders(method, canon, bodyText)
   const token = getAccessToken()
   let attempt = 0
   console.log('Fetching:', url)
   while (true) {
     await acquire()
     let res
+    // AbortController with timeout (can be overridden by params.signal)
+    const controller = new AbortController()
+    const timeoutMs = Number(params?.timeoutMs || DEFAULT_TIMEOUT_MS)
+    const timer = setTimeout(() => { try { controller.abort() } catch {} }, Math.max(0, timeoutMs))
     try {
       res = await fetch(url, {
         ...params,
@@ -68,13 +94,16 @@ async function tryFetch(base, path, params) {
         },
         credentials: 'omit',
         cache: 'no-store',
+        signal: params?.signal || controller.signal,
       })
     } catch (e) {
+      clearTimeout(timer)
       release()
       // Network error: retry a few times with backoff
       if (attempt < 3) { attempt++; await sleep(200 * attempt); continue }
       throw e
     }
+    clearTimeout(timer)
     if (res.status === 429 && attempt < 3) {
       release()
       // Backoff on rate limits
@@ -116,7 +145,9 @@ function candidateBases() {
 }
 
 async function http(path, params) {
-  const bases = resolvedBase ? [resolvedBase] : candidateBases()
+  // Prefer previously resolved base, but fall back to scanning if it fails.
+  const cands = candidateBases()
+  const bases = resolvedBase ? [resolvedBase, ...cands.filter(b => b !== resolvedBase)] : cands
   let lastErr
   for (const b of bases) {
     try {
@@ -125,6 +156,8 @@ async function http(path, params) {
       return out
     } catch (e) {
       lastErr = e
+      // If the cached base fails, clear it so next call rescans
+      if (resolvedBase === b) resolvedBase = null
     }
   }
   throw lastErr || new Error('No backend reachable')
@@ -165,6 +198,11 @@ export const api = MODE === 'master' && masterClient.isEnabled
       getThresholds: () => http('/api/settings/thresholds'),
       putThresholds: (payload) => http('/api/settings/thresholds', { method: 'PUT', body: JSON.stringify(payload) }),
       thresholdsEffective: (deviceId) => http(`/api/thresholds/effective?deviceId=${encodeURIComponent(deviceId)}`),
+      // Admin helpers
+      adminStatus: () => http('/api/admin/status'),
+      adminPing: (key) => fetch(`${getBaseUrl()}/api/admin/ping`, { headers: { 'authorization': key ? `Bearer ${key}` : '' } }).then(r=>r.json()),
+      hmacTest: () => http('/api/admin/hmac-test', { method: 'POST', body: JSON.stringify({}) }),
+      adminAlertsTest: (payload) => http('/api/alerts/test', { method: 'POST', body: JSON.stringify(payload||{}) }),
       exportPdf: (deviceId, from, to, title) => {
         const q = new URLSearchParams({ deviceId })
         if (from) q.set('from', String(from))

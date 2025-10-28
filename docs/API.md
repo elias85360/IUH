@@ -1,48 +1,31 @@
 # API Reference
 
-Base URL: `http://localhost:4000`
+Base path: `/api`
 
-Auth: If `API_KEY` is set on the backend, send header `Authorization: Bearer <token>`.
+Endpoints:
 
-## GET /api/health
-Response: 
-```
-{ "ok": true, "diagnostics": { ... } }
-```
+- `GET /api/health` → `{ ok, diagnostics }`
+- `GET /api/devices` → `{ devices: [{ id, name, type, room, tags }] }`
+- `GET /api/metrics` → `{ metrics: [{ key, unit, displayName, thresholds? }] }`
+- `GET /api/kpis?deviceId=&from=&to=` → `{ deviceId, kpis: { [metricKey]: { last, min, max, avg, unit } } }`
+- `GET /api/timeseries?deviceId=&metricKey=&from=&to=&limit=&bucketMs=` → `{ deviceId, metricKey, points: [{ ts, value, min?, max?, count? }] }`
+- `GET /api/diagnostics` → summary counts
+- `GET /api/export.csv?...` → CSV
+- Assets meta: `GET/PUT /api/assets/meta`
+- Thresholds: `GET/PUT /api/settings/thresholds`, `GET /api/thresholds/effective?deviceId=`
 
-## GET /api/devices
-```
-{ "devices": [ { "id": "dev-1", "name": "Chaudière A", "type": "boiler", "room": "Salle A", "tags": ["prod"] } ] }
-```
+Auth:
 
-## GET /api/metrics
-```
-{ "metrics": [ { "key": "temperature", "unit": "°C", "displayName": "Température", "thresholds": {"warn": 28, "crit": 32} } ] }
-```
+- OIDC Bearer (recommended in prod; `RBAC_ENFORCE=1`)
+- API key Bearer (dev/ops; disable in prod): `authorization: Bearer <API_KEY>`
+- Optional HMAC anti‑replay (`x-api-*` headers)
 
-## GET /api/kpis?deviceId=...&from=ms?&to=ms?
-```
-{ "deviceId": "dev-1", "kpis": { "temperature": {"last": 25.4, "min": 22.1, "max": 29.8, "avg": 25.2, "unit": "°C"} } }
-```
+Socket.IO:
 
-## GET /api/timeseries?deviceId=...&metricKey=...&from=ms?&to=ms?&limit=n?&bucketMs=ms?
-```
-{ "deviceId": "dev-1", "metricKey": "temperature", "points": [ {"ts": 1710000000000, "value": 25.2, "min": 24.8, "max": 25.7, "count": 12, "sum": 302.5} ] }
-```
+- Server → client: `hello`, `point`, `alert`
+- Client → server: `subscribe { room: "<deviceId>::<metricKey>" }`
 
-## GET /api/diagnostics
-```
-{ "devices": 5, "metrics": 4, "seriesKeys": 20, "totalPoints": 12345, "uptimeMs": 120000, "now": 1710000000123 }
-```
+Caching & ETag:
 
-## GET /api/export.csv?deviceId=...&metricKey=...&from=ms?&to=ms?
-Returns a CSV with columns: `timestamp,value`.
-
-## Socket.IO Events
-- Server→Client
-  - `hello` → `{ ok, ts }`
-  - `point` → `{ deviceId, metricKey, ts, value, level }`
-  - `alert` → same as point when level is `warn` or `crit`
-- Client→Server
-  - `subscribe` → `{ room: "<deviceId>::<metricKey>" }`
+- `/api/timeseries` and `/api/kpis` return weak ETag and short cache lifetimes; Redis augments caching when configured.
 

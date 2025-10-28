@@ -54,5 +54,20 @@ describe('Backend API smoke', () => {
     expect(res.body).toHaveProperty('metricKey', metricKey)
     expect(Array.isArray(res.body.points)).toBe(true)
   })
-})
 
+  test('GET /api/timeseries rejects too-small bucketMs', async () => {
+    const config = require('../src/config')
+    const devId = config.devices[0].id
+    const metricKey = config.metrics[0].key
+    const res = await request(app).get(`/api/timeseries?deviceId=${encodeURIComponent(devId)}&metricKey=${encodeURIComponent(metricKey)}&bucketMs=10`)
+    expect(res.status).toBe(400)
+  })
+
+  test('GET /api/timeseries enforces limit <= 10000', async () => {
+    const config = require('../src/config')
+    const devId = config.devices[0].id
+    const metricKey = config.metrics[0].key
+    const res = await request(app).get(`/api/timeseries?deviceId=${encodeURIComponent(devId)}&metricKey=${encodeURIComponent(metricKey)}&limit=1000000`)
+    expect(res.status).toBe(400)
+  })
+})

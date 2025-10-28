@@ -7,12 +7,16 @@ export default function SettingsPage() {
   const { options, setOptions, getThreshold, setThreshold } = useSettings()
   const { period, setPeriodKey, refreshNow, devices } = useUiStore()
   const metrics = ['U','I','P','E','F','pf','temp','humid']
-  const [tab, setTab] = useState('global') // global | devices
+  const [tab, setTab] = useState('global') // global | devices | integrations | auth | flags | apikey | wizard
   const [defaults, setDefaults] = useState({})
   const [kpis, setKpis] = useState({})
+  const [status, setStatus] = useState(null)
+  const [testKey, setTestKey] = useState('')
+  const [wiz, setWiz] = useState({ scope: 'all', warnPct: 20, critPct: 40, metrics: ['P','U','I','temp','pf'] })
 
   useEffect(()=>{ (async()=>{ try { const s = await api.getThresholds(); setDefaults(s.global||{}) } catch {} })() }, [])
   useEffect(()=>{ (async()=>{ const out={}; for (const d of devices){ try{ const r=await api.kpis(d.id); out[d.id]=r.kpis||{} }catch{} } setKpis(out) })() }, [devices])
+  useEffect(()=>{ (async()=>{ try { const s = await api.adminStatus(); setStatus(s) } catch {} })() }, [])
 
   return (
     <div className="panel">
@@ -20,6 +24,11 @@ export default function SettingsPage() {
       <div className="row" style={{gap:8, marginBottom:8}}>
         <button className={`btn ${tab==='global'?'primary':''}`} onClick={()=>setTab('global')}>Global</button>
         <button className={`btn ${tab==='devices'?'primary':''}`} onClick={()=>setTab('devices')}>Devices</button>
+        <button className={`btn ${tab==='integrations'?'primary':''}`} onClick={()=>setTab('integrations')}>Integrations</button>
+        <button className={`btn ${tab==='flags'?'primary':''}`} onClick={()=>setTab('flags')}>Feature flags</button>
+        <button className={`btn ${tab==='auth'?'primary':''}`} onClick={()=>setTab('auth')}>Auth & Roles</button>
+        <button className={`btn ${tab==='apikey'?'primary':''}`} onClick={()=>setTab('apikey')}>API key</button>
+        <button className={`btn ${tab==='wizard'?'primary':''}`} onClick={()=>setTab('wizard')}>Thresholds wizard</button>
       </div>
 
       {tab==='global' && (
@@ -162,6 +171,117 @@ export default function SettingsPage() {
           </table>
         </div>
       </div>
+      )}
+
+      {tab==='integrations' && (
+        <div className="panel" style={{marginTop:16}}>
+          <div className="panel-title">Integrations</div>
+          <div className="row" style={{gap:8, flexWrap:'wrap'}}>
+            <div className="badge">Slack: {status?.ROUTE_SLACK? 'on':'off'}</div>
+            <div className="badge">Webhook: {status?.ROUTE_WEBHOOK? 'on':'off'}</div>
+            <div className="badge">SMTP: {status?.SMTP_CONFIGURED? 'configured':'off'}</div>
+            <button className="btn" onClick={async()=>{ try { await api.adminAlertsTest({ deviceId:'test', metricKey:'P', value:1, level:'warn' }); alert('Test sent') } catch { alert('Test failed') } }}>Send test</button>
+          </div>
+        </div>
+      )}
+
+      {tab==='flags' && (
+        <div className="panel" style={{marginTop:16}}>
+          <div className="panel-title">Feature flags</div>
+          <div className="row" style={{gap:8, flexWrap:'wrap'}}>
+            <div className="badge">TSDB_READ: {status?.TSDB_READ? 'on':'off'}</div>
+            <div className="badge">TSDB_MIRROR: {status?.TSDB_MIRROR? 'on':'off'}</div>
+            <div className="badge">FORECAST_URL: {status?.FORECAST_URL? 'on':'off'}</div>
+            <div className="badge">DATA_SOURCE: {status?.DATA_SOURCE || 'mock'}</div>
+            <div className="badge">API_HMAC_ENFORCE: {status?.API_HMAC_ENFORCE? 'on':'off'}</div>
+          </div>
+          <div className="row" style={{gap:8, marginTop:12}}>
+            <button className="btn" onClick={async()=>{ try { await api.hmacTest(); alert('HMAC ok') } catch { alert('HMAC failed (check VITE_API_HMAC_* and server)') } }}>Test HMAC</button>
+          </div>
+        </div>
+      )}
+
+      {tab==='auth' && (
+        <div className="panel" style={{marginTop:16}}>
+          <div className="panel-title">Auth & Roles</div>
+          <div className="row" style={{gap:8, flexWrap:'wrap'}}>
+            <div className="badge">RBAC_ENFORCE: {status?.RBAC_ENFORCE? 'on':'off'}</div>
+            <div className="badge">ALLOW_API_KEY_WITH_RBAC: {status?.ALLOW_API_KEY_WITH_RBAC? 'on':'off'}</div>
+          </div>
+          <div style={{marginTop:8}}>
+            <pre style={{whiteSpace:'pre-wrap', background:'rgba(255,255,255,0.06)', padding:12, borderRadius:8}}>{JSON.stringify(status, null, 2)}</pre>
+          </div>
+        </div>
+      )}
+
+      {tab==='apikey' && (
+        <div className="panel" style={{marginTop:16}}>
+          <div className="panel-title">API key manager (read-only)</div>
+          <div className="row" style={{gap:8, flexWrap:'wrap'}}>
+            <div className="badge">API_KEY_PRESENT: {status?.API_KEY_PRESENT? 'yes':'no'}</div>
+          </div>
+          <div className="row" style={{gap:8, marginTop:12}}>
+            <input className="input" placeholder="Test with Bearer key" style={{width:260}} value={testKey} onChange={(e)=>setTestKey(e.target.value)} />
+            <button className="btn" onClick={async()=>{ try{ const r=await api.adminPing(testKey); if (r && r.ok) alert('API key valid'); else alert('Invalid or not enabled'); }catch{ alert('Failed') } }}>Test key</button>
+          </div>
+          <div className="badge" style={{marginTop:8}}>Note: generation/rotation côté serveur requiert configuration et redéploiement.</div>
+        </div>
+      )}
+
+      {tab==='wizard' && (
+        <div className="panel" style={{marginTop:16}}>
+          <div className="panel-title">Thresholds Wizard</div>
+          <div className="row" style={{gap:12, flexWrap:'wrap'}}>
+            <label className="row" style={{gap:6}}>
+              Scope
+              <select className="select" value={wiz.scope} onChange={(e)=>setWiz({...wiz, scope: e.target.value})}>
+                <option value="all">All devices</option>
+                <option value="room">By room</option>
+                <option value="type">By type (tag/type)</option>
+              </select>
+            </label>
+            <label className="row" style={{gap:6}}>
+              Warn +%
+              <input className="input" style={{width:90}} type="number" value={wiz.warnPct} onChange={(e)=>setWiz({...wiz, warnPct: Number(e.target.value||0)})} />
+            </label>
+            <label className="row" style={{gap:6}}>
+              Crit +%
+              <input className="input" style={{width:90}} type="number" value={wiz.critPct} onChange={(e)=>setWiz({...wiz, critPct: Number(e.target.value||0)})} />
+            </label>
+            <label className="row" style={{gap:6}}>
+              Metrics
+              <input className="input" style={{width:220}} placeholder="e.g. P,U,I,temp,pf" value={wiz.metrics.join(',')} onChange={(e)=>setWiz({...wiz, metrics: e.target.value.split(',').map(s=>s.trim()).filter(Boolean)})} />
+            </label>
+            <button className="btn" onClick={async()=>{
+              try {
+                const updates = {}
+                for (const d of devices) {
+                  const dev = d
+                  const base = kpis[dev.id] || {}
+                  const entry = {}
+                  for (const m of wiz.metrics) {
+                    const info = base[m]
+                    if (!info) continue
+                    const dir = (m==='pf') ? 'below' : 'above'
+                    if (dir==='above') {
+                      const warn = Number(info.avg || info.last || 0) * (1 + wiz.warnPct/100)
+                      const crit = Number(info.avg || info.last || 0) * (1 + wiz.critPct/100)
+                      entry[m] = { direction: dir, warn: Math.round(warn*100)/100, crit: Math.round(crit*100)/100 }
+                    } else {
+                      const warn = Number(info.avg || info.last || 0) * (1 - wiz.warnPct/100)
+                      const crit = Number(info.avg || info.last || 0) * (1 - wiz.critPct/100)
+                      entry[m] = { direction: dir, warn: Math.round(warn*100)/100, crit: Math.round(crit*100)/100 }
+                    }
+                  }
+                  if (Object.keys(entry).length) updates[dev.id] = entry
+                }
+                await api.putThresholds({ devices: updates })
+                alert('Wizard applied')
+              } catch { alert('Apply failed') }
+            }}>Apply to all</button>
+          </div>
+          <div className="badge" style={{marginTop:8}}>Tip: adjust deadband in Global Options to reduce flapping.</div>
+        </div>
       )}
     </div>
   )

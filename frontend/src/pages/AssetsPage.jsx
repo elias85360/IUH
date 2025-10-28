@@ -3,6 +3,7 @@ import { useAssets } from '../state/assets.js'
 import { api } from '../services/api.js'
 import { useUiStore } from '../state/filters.js'
 import { useAuth } from '../components/AuthProvider.jsx'
+import FloorPlanEditor from '../components/FloorPlanEditor.jsx'
 
 export default function AssetsPage({ devices }) {
   const { meta, setMeta } = useAssets()
@@ -11,6 +12,7 @@ export default function AssetsPage({ devices }) {
   const [newDev, setNewDev] = useState({ id:'', name:'', room:'', tags:'', description:'' })
   const { hasRole } = useAuth()
   const canEdit = hasRole('analyst') || hasRole('admin')
+  const [tab, setTab] = useState('list') // list|plan
   const [search, setSearch] = useState('')
   const [fGroup, setFGroup] = useState('all')
   const [fRoom, setFRoom] = useState('all')
@@ -91,11 +93,98 @@ export default function AssetsPage({ devices }) {
     return <span className={`status-chip ${cls}`}>{new Date(ts).toLocaleTimeString()}</span>
   }
 
+  async function saveMetaToServer() {
+    try {
+      const updates = {}
+      for (const d of devices) {
+        const m = meta[d.id] || {}
+        const entry = {}
+        if (m.name) entry.name = m.name
+        if (m.group || m.floor) entry.group = m.group || m.floor
+        if (m.room) entry.room = m.room
+        if (Array.isArray(m.tags)) entry.tags = m.tags
+        if (m.description) entry.description = m.description
+        if (m.pos) entry.pos = m.pos
+        if (Object.keys(entry).length) updates[d.id] = entry
+      }
+      await api.putAssetsMeta(updates, false)
+      alert('Assets metadata saved')
+    } catch { alert('Save failed') }
+  }
+
+  function exportMetaCsv() {
+    try {
+      const header = ['id','name','group','room','tags','description','posX','posY','exclude']
+      const lines = [header.join(',')]
+      for (const d of devices) {
+        const m = meta[d.id] || {}
+        const tags = (m.tags||[]).join('|')
+        const posX = m.pos?.xPct != null ? m.pos.xPct : ''
+        const posY = m.pos?.yPct != null ? m.pos.yPct : ''
+        const exclude = m.exclude ? '1' : ''
+        lines.push([d.id, JSON.stringify(m.name||''), JSON.stringify(m.group||m.floor||''), JSON.stringify(m.room||''), JSON.stringify(tags), JSON.stringify(m.description||''), posX, posY, exclude].join(','))
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = 'assets_meta.csv'; a.click(); URL.revokeObjectURL(url)
+    } catch {}
+  }
+
+  function importMetaCsv(file) {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const text = String(reader.result||'')
+        const [first, ...rows] = text.split(/\r?\n/)
+        for (const line of rows) {
+          if (!line.trim()) continue
+          const cols = []
+          let cur = ''
+          let inq = false
+          for (let i=0;i<line.length;i++) {
+            const ch = line[i]
+            if (ch==='"') { inq = !inq; cur += ch; continue }
+            if (ch===',' && !inq) { cols.push(cur); cur=''; continue }
+            cur += ch
+          }
+          cols.push(cur)
+          const [id, name, group, room, tags, description, posX, posY, exclude] = cols
+          if (!id) continue
+          const updates = {}
+          if (name) updates.name = JSON.parse(name)
+          if (group) updates.group = JSON.parse(group)
+          if (room) updates.room = JSON.parse(room)
+          if (tags) updates.tags = JSON.parse(tags).split('|').map(s=>s.trim()).filter(Boolean)
+          if (description) updates.description = JSON.parse(description)
+          const x = Number(posX); const y = Number(posY)
+          if (Number.isFinite(x) && Number.isFinite(y)) updates.pos = { xPct: x, yPct: y }
+          if (exclude != null && exclude.trim() !== '') updates.exclude = exclude.trim() === '1'
+          if (Object.keys(updates).length) setMeta(id, updates)
+        }
+        alert('CSV imported. Click "Save meta" to persist to server.')
+      } catch { alert('CSV import failed') }
+    }
+    reader.readAsText(file)
+  }
+
   return (
     <div className="panel">
-      <div className="panel-header">
+      <div className="panel-header" style={{justifyContent:'space-between'}}>
         <div className="panel-title">Assets & Groups</div>
+        <div className="row" style={{gap:8}}>
+          <button className={`btn ${tab==='list'?'primary':''}`} onClick={()=>setTab('list')}>List</button>
+          <button className={`btn ${tab==='plan'?'primary':''}`} onClick={()=>setTab('plan')}>Floor plan</button>
+        </div>
       </div>
+      {tab==='plan' && (
+        <div className="panel" style={{marginBottom:16}}>
+          <div className="panel-title">Floor plan</div>
+          <FloorPlanEditor devices={devices} meta={meta} setMeta={setMeta} />
+          <div className="row" style={{gap:8, marginTop:12}}>
+            <button className="btn" onClick={saveMetaToServer}>Save meta</button>
+          </div>
+        </div>
+      )}
       <div className="row" style={{gap:8, marginBottom:12, flexWrap:'wrap'}}>
         <input className="input" placeholder="Search id/name" style={{width:220}} value={search} onChange={(e)=>setSearch(e.target.value)} />
         <select className="select" value={fGroup} onChange={(e)=>setFGroup(e.target.value)}>
@@ -114,6 +203,7 @@ export default function AssetsPage({ devices }) {
           <option value="temp">Temp</option>
         </select>
       </div>
+      {tab==='list' && (
       <div className="row" style={{gap:8, marginBottom:12}}>
         <input className="input" placeholder="New device id" style={{width:220}} value={newDev.id} onChange={(e)=>setNewDev({...newDev, id:e.target.value})} />
         <input className="input" placeholder="Name" style={{width:160}} value={newDev.name} onChange={(e)=>setNewDev({...newDev, name:e.target.value})} />
@@ -127,6 +217,8 @@ export default function AssetsPage({ devices }) {
         }}>Add/Update</button>
         <span className="badge">Note: pour Kienlab, ajoutez aussi l'ID dans VITE_KIENLAB_DEVICES pour activer les données.</span>
       </div>
+      )}
+      {tab==='list' && (
       <div style={{overflowX:'auto'}}>
         <table style={{width:'100%', borderCollapse:'collapse'}}>
           <thead>
@@ -166,6 +258,17 @@ export default function AssetsPage({ devices }) {
           </tbody>
         </table>
       </div>
+      )}
+      {tab==='list' && (
+        <div className="row" style={{gap:8, marginTop:12}}>
+          <button className="btn" onClick={saveMetaToServer}>Save meta</button>
+          <button className="btn" onClick={exportMetaCsv}>Export CSV</button>
+          <label className="btn" style={{display:'inline-flex', alignItems:'center', gap:8}}>
+            Import CSV
+            <input type="file" accept=".csv" style={{display:'none'}} onChange={(e)=>{ const f=e.target.files?.[0]; if (f) importMetaCsv(f) }} />
+          </label>
+        </div>
+      )}
     </div>
   )
 }

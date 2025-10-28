@@ -7,7 +7,7 @@ import { chartTheme as T } from '../lib/theme.js'
 
 const COLORS = ['#5bbcff','#22c55e','#a78bfa','#f59e0b','#ef4444','#06b6d4','#84cc16']
 
-export default function RoomContribution({ devices=[] }) {
+export default function RoomContribution({ devices=[], onSelectRoom }) {
   const { anchorNow, period } = useUiStore()
   const { meta } = useAssets()
   const [rows, setRows] = useState([])
@@ -49,12 +49,12 @@ export default function RoomContribution({ devices=[] }) {
       <div className="panel-title">Contribution by Room (kWh)</div>
       <div style={{height:240}}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} layout="vertical" margin={{left: 100}}>
+          <BarChart data={rows} layout="vertical" margin={{left: 100}} onClick={(e)=>{ const r=e?.activePayload?.[0]?.payload?.room; if (r && onSelectRoom) onSelectRoom(r) }}>
             <CartesianGrid stroke={T.grid} />
             <XAxis type="number" stroke={T.axis} />
             <YAxis type="category" dataKey="room" stroke={T.axis} width={120} />
             <Tooltip />
-            <Bar dataKey="kwh" fill={COLORS[0]} />
+            <Bar dataKey="kwh" fill={COLORS[0]} cursor={onSelectRoom? 'pointer':'default'} />
           </BarChart>
         </ResponsiveContainer>
       </div>

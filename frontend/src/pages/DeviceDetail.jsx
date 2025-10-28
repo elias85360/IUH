@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api.js'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Brush } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, BarChart, Bar, Brush } from 'recharts'
 import { chartTheme as T } from '../lib/theme.js'
 import { format } from 'date-fns'
 import { useUiStore } from '../state/filters.js'
@@ -28,8 +28,9 @@ function Series({ deviceId, metricKey, from, to, bucketMs, valueMin, valueMax })
   const [points, setPoints] = useState([])
   useEffect(() => {
     let cancel = false
+    const controller = new AbortController()
     async function run() {
-      const res = await api.timeseries(deviceId, metricKey, { from, to, bucketMs: bucketMs || Math.floor((to - from) / 200) })
+      const res = await api.timeseries(deviceId, metricKey, { from, to, bucketMs: bucketMs || Math.floor((to - from) / 200), signal: controller.signal, timeoutMs: 15000 })
       let pts = res.points || []
       // Apply optional value range filtering if provided.  Only
       // points whose numeric value lies between valueMin and
@@ -52,6 +53,7 @@ function Series({ deviceId, metricKey, from, to, bucketMs, valueMin, valueMax })
     if (deviceId && metricKey) run()
     return () => {
       cancel = true
+      try { controller.abort() } catch {}
     }
   }, [deviceId, metricKey, from, to, bucketMs, valueMin, valueMax])
   return points
@@ -67,12 +69,14 @@ export default function DeviceDetail({ devices, metrics }) {
   const { byDevice, add, remove } = useAnnotations()
   const anns = byDevice[id] || []
   const { options, getThreshold } = useSettings()
+  const { live, toggleLive } = useUiStore()
   // State used to force chart re-renders when resetting zoom
   const [resetKey, setResetKey] = useState(0)
   // Search params for drilldown metric
   const [searchParams] = useSearchParams()
   const from = anchorNow - period.ms
   const to = anchorNow
+  const modalPanelRef = useRef(null)
 
   const params = { bucketMs: options.bucketMs }
   const commonArgs = { from, to, ...params, valueMin, valueMax }
@@ -97,11 +101,31 @@ export default function DeviceDetail({ devices, metrics }) {
     if (type) setModal({ type, open: true })
   }, [searchParams])
 
+  // Focus modal on open
+  useEffect(()=>{
+    if (modal.open) {
+      setTimeout(()=>{
+        try { const el = document.getElementById('device-modal-panel'); if (el) el.focus() } catch {}
+      }, 0)
+    }
+  }, [modal.open])
+
   if (!device) return <div className="panel">Device not found. <Link to="/devices">Back</Link></div>
+
+  function strideDownsample(arr, max = 2000) {
+    if (!Array.isArray(arr) || arr.length <= max) return arr
+    const stride = Math.ceil(arr.length / max)
+    const out = []
+    for (let i = 0; i < arr.length; i += stride) out.push(arr[i])
+    if (out[out.length - 1]?.ts !== arr[arr.length - 1].ts) out.push(arr[arr.length - 1])
+    return out
+  }
 
   const merge = (arr) => {
     // Convert raw points to {ts, value}
     let out = arr.map(p => ({ ts: p.ts, value: Number(p.value) }))
+    // Downsample for UI if needed
+    out = strideDownsample(out, 2000)
     // Apply optional smoothing based on settings
     const { smoothing, smoothingMode, smoothingWindow } = options
     if (smoothing && out.length > 3) {
@@ -231,6 +255,67 @@ export default function DeviceDetail({ devices, metrics }) {
   const derivativeP = useMemo(() => computeDerivative(mergedP), [mergedP])
   const derivativeAnoms = useMemo(() => detectDerivativeAnomalies(mergedP, options.anomalyZ || 3), [mergedP, options.anomalyZ])
   const forecastP = useMemo(() => linearForecast(mergedP, period.ms), [mergedP, period.ms])
+  // Forecast fan bounds using simple stddev band
+  const forecastBand = useMemo(() => {
+    try {
+      const vals = mergedP.slice(-200).map(p=>Number(p.value)).filter(Number.isFinite)
+      if (vals.length < 2 || !forecastP || !forecastP.length) return { upper: [], lower: [] }
+      const avg = vals.reduce((a,b)=>a+b,0)/vals.length
+      const variance = vals.reduce((s,v)=> s + Math.pow(v-avg,2), 0) / (vals.length-1)
+      const sigma = Math.sqrt(Math.max(0, variance))
+      const k = 1.0
+      return {
+        upper: forecastP.map(p => ({ ts: p.ts, value: p.value + k*sigma })),
+        lower: forecastP.map(p => ({ ts: p.ts, value: Math.max(0, p.value - k*sigma) })),
+      }
+    } catch { return { upper: [], lower: [] } }
+  }, [mergedP, forecastP])
+
+  // Quality overlay (missing buckets) for all metrics
+  const [missingMap, setMissingMap] = useState({ P: [], U: [], I: [], F: [], pf: [], temp: [], humid: [] })
+  useEffect(()=>{
+    let cancel=false
+    ;(async()=>{
+      try {
+        const bucketMs = options.bucketMs || Math.max(60*1000, Math.floor((to-from)/200))
+        const q = new URLSearchParams({ from:String(from), to:String(to), bucketMs:String(bucketMs), detail:'1' })
+        const r = await fetch(api.getBaseUrl() + '/api/quality?' + q.toString())
+        if (!r.ok) return
+        const payload = await r.json()
+        const rows = (payload.items||[]).filter(row => row.deviceId===id)
+        const map = { P: [], U: [], I: [], F: [], pf: [], temp: [], humid: [] }
+        const presentByMetric = {}
+        for (const row of rows) {
+          if (!Array.isArray(row.presentBuckets)) continue
+          presentByMetric[row.metricKey] = new Set(row.presentBuckets.map(Number))
+        }
+        for (const key of Object.keys(map)) {
+          const present = presentByMetric[key]
+          if (!present) { map[key] = []; continue }
+          const gaps = []
+          for (let t = Math.floor(from / bucketMs) * bucketMs; t <= to; t += bucketMs) {
+            if (!present.has(t)) gaps.push({ x1: t, x2: t + bucketMs })
+          }
+          map[key] = gaps
+        }
+        if (!cancel) setMissingMap(map)
+      } catch {}
+    })()
+    return ()=>{ cancel=true }
+  }, [id, from, to, options.bucketMs])
+
+  // Viewport-aware export (from Brush)
+  const [viewRange, setViewRange] = useState(null)
+  const pData = useMemo(()=> merge(P), [P, options.smoothing, options.smoothingMode, options.smoothingWindow])
+  function onPBrushChange(range){
+    try {
+      if (!range || range.startIndex==null || range.endIndex==null) { setViewRange(null); return }
+      const arr = pData
+      const a = arr[Math.max(0, range.startIndex)]?.ts
+      const b = arr[Math.min(arr.length-1, range.endIndex)]?.ts
+      if (Number.isFinite(a) && Number.isFinite(b)) setViewRange({ fromTs: a, toTs: b })
+    } catch { setViewRange(null) }
+  }
 
   return (
     <div>
@@ -243,6 +328,13 @@ export default function DeviceDetail({ devices, metrics }) {
           <div className="row" style={{gap:8}}>
             <button className="btn" disabled={!hasRole('analyst')} title={!hasRole('analyst')? 'Requiert rôle analyst':''} onClick={()=>download(`${id}_U.csv`, toCsv(U))}>Export U (CSV)</button>
             <button className="btn" disabled={!hasRole('analyst')} title={!hasRole('analyst')? 'Requiert rôle analyst':''} onClick={()=>download(`${id}_P.csv`, toCsv(P))}>Export P (CSV)</button>
+            <button className="btn" disabled={!hasRole('analyst')} title={!hasRole('analyst')? 'Requiert rôle analyst':''}
+              onClick={()=>{
+                try {
+                  const arr = pData.filter(p => !viewRange || (p.ts>=viewRange.fromTs && p.ts<=viewRange.toTs)).map(p=>({ ts:p.ts, value:p.value }))
+                  download(`${id}_P_view.csv`, toCsv(arr))
+                } catch {}
+              }}>Export P (CSV, view)</button>
             {/* JSON export buttons */}
             <button className="btn" disabled={!hasRole('analyst')} title={!hasRole('analyst')? 'Requiert rôle analyst':''} onClick={() => { downloadText(`${id}_U.json`, toJson(U)) }}>Export U (JSON)</button>
             <button className="btn" disabled={!hasRole('analyst')} title={!hasRole('analyst')? 'Requiert rôle analyst':''} onClick={() => { downloadText(`${id}_P.json`, toJson(P)) }}>Export P (JSON)</button>
@@ -255,6 +347,7 @@ export default function DeviceDetail({ devices, metrics }) {
                   const a = document.createElement('a'); a.href = url; a.download = `${id}_report.pdf`; a.click(); URL.revokeObjectURL(url)
                 } catch { /* ignore */ }
               }}>Export PDF</button>
+            <button className={`btn ${live? 'primary':''}`} onClick={toggleLive}>{live? 'Live: ON':'Live: OFF'}</button>
             <Link to="/devices" className="btn">← Back</Link>
           </div>
         </div>
@@ -291,12 +384,31 @@ export default function DeviceDetail({ devices, metrics }) {
                 <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={14} minTickGap={10}/>
                 <YAxis yAxisId={0} stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
                 <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
-                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
+                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>{
+                  const v = Number(val)
+                  const tx = name==='U'? thresholds.U : thresholds.I
+                  if (!tx) return [v, name]
+                  const dir = tx.direction || 'above'
+                  let delta = ''
+                  if (dir==='above') { if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(1)})` }
+                  else { if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(1)})` }
+                  return [v, `${name}${delta}`]
+                }} />
+                {(missingMap.U||[]).map((g,i)=> (<ReferenceArea key={'mu'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
+                {(missingMap.I||[]).map((g,i)=> (<ReferenceArea key={'mi'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
+                {Number.isFinite(thresholds.U?.warn) && Number.isFinite(thresholds.U?.crit) && (
+                  <ReferenceArea yAxisId={0} y1={Math.min(thresholds.U.warn, thresholds.U.crit)} y2={Math.max(thresholds.U.warn, thresholds.U.crit)} strokeOpacity={0} fill="#f59e0b" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.U?.crit) && (
+                  <ReferenceArea yAxisId={0} y1={thresholds.U.crit} y2={(stat.U.max||thresholds.U.crit)} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                )}
                 {hoverTs && <ReferenceLine x={hoverTs} stroke={T.brush} strokeDasharray="3 3" />}
                 <ReferenceLine y={thresholds.U?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
                 <ReferenceLine y={thresholds.U?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
                 <Line type="monotone" yAxisId={0} dataKey="U" stroke={T.series.purple} dot={false} name="U" />
                 <Line type="monotone" yAxisId={1} dataKey="I" stroke={T.series.cyan} dot={false} name="I" />
+                {options.showBaseline && baselineMap.U.length>0 && <Line type="monotone" yAxisId={0} data={baselineMap.U} dataKey="value" stroke={T.series.gray} dot={false} strokeDasharray="4 3" />}
+                {options.showBaseline && baselineMap.I.length>0 && <Line type="monotone" yAxisId={1} data={baselineMap.I} dataKey="value" stroke={T.series.gray} dot={false} strokeDasharray="4 3" />}
                 <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} />
               </LineChart>
             </ResponsiveContainer>
@@ -316,8 +428,28 @@ export default function DeviceDetail({ devices, metrics }) {
                 <CartesianGrid stroke={T.grid} />
                 <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={14} minTickGap={10}/>
                 <YAxis stroke={T.axis} domain={["auto","auto"]} tickCount={12} allowDecimals />
-                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
+                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val)=>{
+                  const v = Number(val)
+                  const th = thresholds.P || {}
+                  const dir = th.direction || 'above'
+                  let delta = ''
+                  if (dir==='above') {
+                    if (th.crit!=null && v>=th.crit) delta = ` (+${(v-th.crit).toFixed(0)} over crit)`
+                    else if (th.warn!=null && v>=th.warn) delta = ` (+${(v-th.warn).toFixed(0)} over warn)`
+                  } else {
+                    if (th.crit!=null && v<=th.crit) delta = ` (${(v-th.crit).toFixed(0)}) vs crit`
+                    else if (th.warn!=null && v<=th.warn) delta = ` (${(v-th.warn).toFixed(0)}) vs warn`
+                  }
+                  return [v, `P${delta}`]
+                }} />
                 {hoverTs && <ReferenceLine x={hoverTs} stroke={T.brush} strokeDasharray="3 3" />}
+                {(missingMap.P||[]).map((g,i)=> (<ReferenceArea key={i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.08} />))}
+                {Number.isFinite(thresholds.P?.warn) && Number.isFinite(thresholds.P?.crit) && (
+                  <ReferenceArea y1={Math.min(thresholds.P.warn, thresholds.P.crit)} y2={Math.max(thresholds.P.warn, thresholds.P.crit)} strokeOpacity={0} fill="#f59e0b" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.P?.crit) && (
+                  <ReferenceArea y1={thresholds.P.crit} y2={(stat.P.max||thresholds.P.crit)} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                )}
                 <ReferenceLine y={thresholds.P?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
                 <ReferenceLine y={thresholds.P?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
                 <Line type="monotone" dataKey="value" stroke={T.series.secondary}
@@ -328,11 +460,22 @@ export default function DeviceDetail({ devices, metrics }) {
                   } : false}
                   name="P"
                 />
+                {/* Derived metric overlay P≈U×I when available */}
+                {U.length>0 && I.length>0 && (
+                  <Line type="monotone" dataKey="value" name="U×I" stroke={T.series.blue} dot={false}
+                    data={mergeTwo(U, I, 'U', 'I').map(p => ({ ts: p.ts, value: (Number(p.U)||0) * (Number(p.I)||0) }))}
+                    strokeDasharray="6 3"
+                  />
+                )}
                 {options.showBaseline && <Line type="monotone" dataKey="value" data={baselineSeries} stroke={T.series.gray} dot={false} name="baseline" strokeDasharray="4 3" />}
                 {options.showForecast && forecastP && forecastP.length>0 && (
-                  <Line type="monotone" data={forecastP} dataKey="value" stroke={T.series.blue} dot={false} name="forecast" strokeDasharray="6 3" />
+                  <>
+                    <Line type="monotone" data={forecastP} dataKey="value" stroke={T.series.blue} dot={false} name="forecast" strokeDasharray="6 3" />
+                    {forecastBand.upper.length>0 && <Line type="monotone" data={forecastBand.upper} dataKey="value" stroke={T.series.blue} dot={false} strokeDasharray="2 6" />}
+                    {forecastBand.lower.length>0 && <Line type="monotone" data={forecastBand.lower} dataKey="value" stroke={T.series.blue} dot={false} strokeDasharray="2 6" />}
+                  </>
                 )}
-                <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} />
+                <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} onChange={onPBrushChange} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -369,11 +512,38 @@ export default function DeviceDetail({ devices, metrics }) {
                 <XAxis dataKey="ts" stroke={T.axis} tickFormatter={fmt} tickCount={14} minTickGap={10}/>
                 <YAxis yAxisId={0} stroke={T.axis} domain={[0,1]} tickCount={11} allowDecimals tickFormatter={(v)=>v.toFixed(2)}/>
                 <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
-                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
+                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>{
+                  const v = Number(val)
+                  const tx = name==='pf'? thresholds.pf : thresholds.F
+                  if (!tx) return [v, name]
+                  const dir = tx.direction || (name==='pf' ? 'below' : 'above')
+                  let delta = ''
+                  if (dir==='above') { if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(2)})`; else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(2)})` }
+                  else { if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(2)})`; else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(2)})` }
+                  return [v, `${name}${delta}`]
+                }} />
+                {(missingMap.pf||[]).map((g,i)=> (<ReferenceArea key={'mpf'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
+                {(missingMap.F||[]).map((g,i)=> (<ReferenceArea key={'mf'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
+                {/* pf below-threshold shading: [0,crit]=red, [crit,warn]=yellow */}
+                {Number.isFinite(thresholds.pf?.crit) && (
+                  <ReferenceArea yAxisId={0} y1={0} y2={thresholds.pf.crit} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.pf?.warn) && Number.isFinite(thresholds.pf?.crit) && thresholds.pf.warn>thresholds.pf.crit && (
+                  <ReferenceArea yAxisId={0} y1={thresholds.pf.crit} y2={thresholds.pf.warn} strokeOpacity={0} fill="#f59e0b" fillOpacity={0.06} />
+                )}
+                {/* F above-threshold shading */}
+                {Number.isFinite(thresholds.F?.warn) && Number.isFinite(thresholds.F?.crit) && (
+                  <ReferenceArea yAxisId={1} y1={Math.min(thresholds.F.warn, thresholds.F.crit)} y2={Math.max(thresholds.F.warn, thresholds.F.crit)} strokeOpacity={0} fill="#f59e0b" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.F?.crit) && (
+                  <ReferenceArea yAxisId={1} y1={thresholds.F.crit} y2={(stat.F.max||thresholds.F.crit)} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                )}
                 <ReferenceLine y={thresholds.pf?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
                 <ReferenceLine y={thresholds.pf?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
                 <Line type="monotone" yAxisId={0} dataKey="pf" stroke={T.series.warning} dot={false} name="pf" />
                 <Line type="monotone" yAxisId={1} dataKey="F" stroke={T.series.blue} dot={false} name="F" />
+                {options.showBaseline && baselineMap.pf.length>0 && <Line type="monotone" yAxisId={0} data={baselineMap.pf} dataKey="value" stroke={T.series.gray} dot={false} strokeDasharray="4 3" />}
+                {options.showBaseline && baselineMap.F.length>0 && <Line type="monotone" yAxisId={1} data={baselineMap.F} dataKey="value" stroke={T.series.gray} dot={false} strokeDasharray="4 3" />}
                 <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} />
               </LineChart>
             </ResponsiveContainer>
@@ -389,10 +559,35 @@ export default function DeviceDetail({ devices, metrics }) {
                 <XAxis dataKey="ts" stroke={T.axis} tickFormatter={fmt} tickCount={14} minTickGap={10}/>
                 <YAxis yAxisId={0} stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
                 <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
-                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
+                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>{
+                  const v = Number(val)
+                  const tx = name==='temp'? thresholds.temp : thresholds.humid
+                  if (!tx) return [v, name]
+                  const dir = tx.direction || 'above'
+                  let delta = ''
+                  if (dir==='above') { if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(1)})` }
+                  else { if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(1)})` }
+                  return [v, `${name}${delta}`]
+                }} />
+                {(missingMap.temp||[]).map((g,i)=> (<ReferenceArea key={'mt'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
+                {(missingMap.humid||[]).map((g,i)=> (<ReferenceArea key={'mh'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
                 {hoverTs && <ReferenceLine x={hoverTs} stroke={T.brush} strokeDasharray="3 3" />}
+                {Number.isFinite(thresholds.temp?.warn) && Number.isFinite(thresholds.temp?.crit) && (
+                  <ReferenceArea yAxisId={0} y1={Math.min(thresholds.temp.warn, thresholds.temp.crit)} y2={Math.max(thresholds.temp.warn, thresholds.temp.crit)} strokeOpacity={0} fill="#f59e0b" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.temp?.crit) && (
+                  <ReferenceArea yAxisId={0} y1={thresholds.temp.crit} y2={(stat.temp.max||thresholds.temp.crit)} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.humid?.warn) && Number.isFinite(thresholds.humid?.crit) && (
+                  <ReferenceArea yAxisId={1} y1={Math.min(thresholds.humid.warn, thresholds.humid.crit)} y2={Math.max(thresholds.humid.warn, thresholds.humid.crit)} strokeOpacity={0} fill="#f59e0b" fillOpacity={0.06} />
+                )}
+                {Number.isFinite(thresholds.humid?.crit) && (
+                  <ReferenceArea yAxisId={1} y1={thresholds.humid.crit} y2={(stat.humid.max||thresholds.humid.crit)} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                )}
                 <Line type="monotone" yAxisId={0} dataKey="temp" stroke={T.series.danger} dot={false} name="temp" />
                 <Line type="monotone" yAxisId={1} dataKey="humid" stroke={T.series.cyan} dot={false} name="humid" />
+                {options.showBaseline && baselineMap.temp.length>0 && <Line type="monotone" yAxisId={0} data={baselineMap.temp} dataKey="value" stroke={T.series.gray} dot={false} strokeDasharray="4 3" />}
+                {options.showBaseline && baselineMap.humid.length>0 && <Line type="monotone" yAxisId={1} data={baselineMap.humid} dataKey="value" stroke={T.series.gray} dot={false} strokeDasharray="4 3" />}
                 <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} />
               </LineChart>
             </ResponsiveContainer>
@@ -407,8 +602,9 @@ export default function DeviceDetail({ devices, metrics }) {
         <StatsPanel series={mergedP} metric="P" />
       </div>
       {modal.open && (
-        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center'}} onClick={()=>setModal({open:false})}>
-          <div className="panel" style={{width:'90%', height:'70%'}} onClick={(e)=>e.stopPropagation()}>
+        <div role="dialog" aria-modal="true" style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center'}} onClick={()=>setModal({open:false})}
+          onKeyDown={(e)=>{ if (e.key==='Escape') setModal({open:false}) }}>
+          <div className="panel" style={{width:'90%', height:'70%'}} onClick={(e)=>e.stopPropagation()} tabIndex={0} id="device-modal-panel">
             {/* Modal header with reset button */}
             <div className="row" style={{justifyContent:'flex-end', marginBottom:8}}>
               <button className="btn" onClick={() => setResetKey(k => k + 1)}>Reset zoom</button>
