@@ -1,0 +1,40 @@
+# Normalize text files in repo; enforce LF for source/config
+* text=auto
+
+# Code and config (force LF)
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.mjs    text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.css    text eol=lf
+*.html   text eol=lf
+*.conf   text eol=lf
+*.ini    text eol=lf
+*.env    text eol=lf
+Dockerfile        text eol=lf
+*.Dockerfile      text eol=lf
+infra/**/Dockerfile text eol=lf
+*.sh     text eol=lf
+
+# Windows scripts (CRLF)
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# Binary files (no EOL normalization)
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.ttf    binary
+*.woff   binary
+*.woff2  binary
+*.zip    binary
+*.gz     binary
