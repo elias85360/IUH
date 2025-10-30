@@ -4,6 +4,7 @@ import { api } from '../services/api.js'
 import { useUiStore } from '../state/filters.js'
 import { useAuth } from '../components/AuthProvider.jsx'
 import FloorPlanEditor from '../components/FloorPlanEditor.jsx'
+import { formatValue, unitForMetric } from '../lib/format.js'
 
 export default function AssetsPage({ devices }) {
   const { meta, setMeta } = useAssets()
@@ -18,6 +19,7 @@ export default function AssetsPage({ devices }) {
   const [fRoom, setFRoom] = useState('all')
   const [fTag, setFTag] = useState('all')
   const [sortBy, setSortBy] = useState('name') // name|last|P|temp
+  const [busySuggest, setBusySuggest] = useState(false)
 
   useEffect(()=>{
     let cancel=false
@@ -130,6 +132,38 @@ export default function AssetsPage({ devices }) {
     } catch {}
   }
 
+  async function suggestDescriptions() {
+    if (!canEdit) return
+    const overwrite = window.confirm('Remplir automatiquement les descriptions à partir des métriques observées ?\nOK = écraser les descriptions existantes, Annuler = ne remplir que les vides.')
+    setBusySuggest(true)
+    try {
+      let deadband = ''
+      try { const s = await api.getThresholds(); deadband = (s?.options?.deadbandPct != null) ? `${s.options.deadbandPct}%` : '' } catch {}
+      const now = Date.now()
+      const from = now - 7*24*60*60*1000
+      for (const d of devices) {
+        const m = meta[d.id] || {}
+        if (m.description && !overwrite) continue
+        let metricsList = []
+        try { const r = await api.metrics(d.id); metricsList = (r.metrics||[]).map(x=>x.key||x) } catch {}
+        let k = {}
+        try { const r = await api.kpis(d.id, from, now); k = r.kpis || r } catch {}
+        const parts = []
+        if (metricsList.includes('P') && k.P) parts.push(`P moy ${formatValue('P', k.P.avg)}, max ${formatValue('P', k.P.max)}`)
+        if (metricsList.includes('U') && k.U) parts.push(`U moy ${formatValue('U', k.U.avg)}, min ${formatValue('U', k.U.min)}, max ${formatValue('U', k.U.max)}`)
+        if (metricsList.includes('I') && k.I) parts.push(`I moy ${formatValue('I', k.I.avg)}, max ${formatValue('I', k.I.max)}`)
+        if (metricsList.includes('F') && k.F) parts.push(`F moy ${formatValue('F', k.F.avg)}`)
+        if (metricsList.includes('pf') && k.pf) parts.push(`pf moy ${Number(k.pf.avg).toFixed(2)}`)
+        if (metricsList.includes('temp') && k.temp) parts.push(`temp moy ${formatValue('temp', k.temp.avg)}`)
+        if (metricsList.includes('humid') && k.humid) parts.push(`humid moy ${formatValue('humid', k.humid.avg)}`)
+        const measures = parts.length ? parts.join('; ') : 'Mesures électriques et environnementales'
+        const desc = `Appareil: ${m.name || d.name}. Mesures sur 7j: ${measures}. Seuils dans Settings; deadband ${deadband || 'par défaut'}.`
+        setMeta(d.id, { description: desc })
+      }
+      alert('Descriptions proposées. Vérifiez puis cliquez sur "Save meta" pour persister côté serveur.')
+    } finally { setBusySuggest(false) }
+  }
+
   function importMetaCsv(file) {
     const reader = new FileReader()
     reader.onload = () => {
@@ -216,6 +250,7 @@ export default function AssetsPage({ devices }) {
           setNewDev({ id:'', name:'', room:'', tags:'', description:'' })
         }}>Add/Update</button>
         <span className="badge">Note: pour Kienlab, ajoutez aussi l'ID dans VITE_KIENLAB_DEVICES pour activer les données.</span>
+        {canEdit && <button className="btn" disabled={busySuggest} onClick={suggestDescriptions}>{busySuggest? 'Suggesting…' : 'Suggest descriptions'}</button>}
       </div>
       )}
       {tab==='list' && (

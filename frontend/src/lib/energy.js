@@ -2,6 +2,8 @@ import { api } from '../services/api.js'
 
 // Returns [{ ts, kwh }] summed across devices for the given bucketMs.
 export async function fetchEnergyBuckets(devices, from, to, bucketMs) {
+  // Optional global precision toggle (Home): halve the bucket when enabled
+  try { const p = typeof window!=='undefined' && window.localStorage && localStorage.getItem('home-precise'); if (p==='1') bucketMs = Math.max(60*1000, Math.floor(bucketMs/2)) } catch {}
   const buckets = new Map()
   let totalWh = 0
   // Try E (Wh) first

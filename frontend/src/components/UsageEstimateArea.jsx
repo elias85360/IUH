@@ -24,21 +24,34 @@ export default function UsageEstimateArea({ devices }) {
       const cum = arr.map(x=>{ sum+=x.kwh; return { ts:x.ts, value:sum } })
       // simple projection: linear using last two points
       let proj=[]
+      let sigma=0
       if (cum.length>=2){
         const n=cum.length
         const dt = cum[n-1].ts - cum[n-2].ts
         const dv = cum[n-1].value - cum[n-2].value
         const rate = dt>0? dv/dt : 0
+        // estimate uncertainty from recent increments
+        try {
+          const inc = []
+          for (let i=1;i<cum.length;i++){ const di=cum[i].value - cum[i-1].value; if (Number.isFinite(di)) inc.push(di) }
+          const last = inc.slice(-Math.min(12, inc.length))
+          const avg = last.reduce((s,v)=>s+v,0)/Math.max(1,last.length)
+          const varr = last.reduce((s,v)=> s + Math.pow(v-avg,2), 0) / Math.max(1,(last.length-1))
+          sigma = Math.sqrt(Math.max(0, varr))
+        } catch { sigma = 0 }
         const end = from + period.ms
         for (let t=cum[n-1].ts+dt; t<=end; t+=dt){ proj.push({ ts:t, value: cum[n-1].value + rate*((t-cum[n-1].ts)) }) }
       }
-      if (!cancel) setRows([cum, proj])
+      if (!cancel) setRows([cum, proj, sigma])
     }
     run(); return ()=>{ cancel=true }
   }, [devices, from, to])
 
   const actual = rows[0]||[]
   const proj = rows[1]||[]
+  const sigma = Number(rows[2]||0)
+  const bandUpper = proj.map(p=> ({ ts:p.ts, value: p.value + sigma }))
+  const bandLower = proj.map(p=> ({ ts:p.ts, value: Math.max(0, p.value - sigma) }))
 
   // Apply optional smoothing based on settings
   function smoothSeries(series) {
@@ -91,8 +104,15 @@ export default function UsageEstimateArea({ devices }) {
             <XAxis dataKey="ts" tickFormatter={(v)=>format(new Date(v),'dd MMM')} stroke={T.axis}/>
             <YAxis stroke={T.axis} scale={scale} domain={domain}/>
             <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
-            <Area type="monotone" dataKey="value" stroke={T.series.primary} fill="#5bbcff33" />
-            {smoothedProj.length>0 && <Line data={smoothedProj} type="monotone" dataKey="value" stroke={T.series.warning} dot={false} />}
+            <Area type="monotone" dataKey="value" stroke={T.series.primary} fill="#5bbcff33" name="Réel" />
+            {smoothedProj.length>0 && (
+              <>
+                {/* Uncertainty band */}
+                <Area data={bandUpper} type="monotone" dataKey="value" strokeOpacity={0} fill="#f59e0b22" isAnimationActive={false} name="Prévu (+σ)" />
+                <Area data={bandLower} type="monotone" dataKey="value" strokeOpacity={0} fill="#f59e0b22" isAnimationActive={false} name="Prévu (-σ)" />
+                <Line data={smoothedProj} type="monotone" dataKey="value" stroke={T.series.warning} dot={false} name="Prévu" />
+              </>
+            )}
           </AreaChart>
         </ResponsiveContainer>
         {(!actual || actual.length===0) && <SkeletonBox height={'100%'} />}

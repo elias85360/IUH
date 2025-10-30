@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api.js'
+import { toDisplay, unitForMetric } from '../lib/format.js'
 
 const Card = ({ title, value, unit, icon, subtitle }) => (
   <div className="statcard">
@@ -105,7 +106,7 @@ export default function StatCards({ devices }) {
         <div className="row" style={{justifyContent:'space-between'}}>
           <div>
             <div className="stat-title">Energy</div>
-            <div className="stat-value">{totals.energy}{arrow(totals.energy, totals.prev?.energy)} <span className="stat-unit">kWh</span></div>
+            <div className="stat-value">{toDisplay('E', totals.energy).toFixed(1)}{arrow(totals.energy, totals.prev?.energy)} <span className="stat-unit">{unitForMetric('E')}</span></div>
             <div className="stat-sub">Sum last 24h</div>
           </div>
           <div className="stat-icon">⚡</div>
@@ -115,7 +116,7 @@ export default function StatCards({ devices }) {
         <div className="row" style={{justifyContent:'space-between'}}>
           <div>
             <div className="stat-title">Voltage</div>
-            <div className="stat-value"><span className={`sla-band ${level('U', totals.voltage)}`}></span>{totals.voltage}{arrow(totals.voltage, totals.prev?.voltage)} <span className="stat-unit">V</span></div>
+            <div className="stat-value"><span className={`sla-band ${level('U', totals.voltage)}`}></span>{toDisplay('U', totals.voltage).toFixed(1)}{arrow(totals.voltage, totals.prev?.voltage)} <span className="stat-unit">{unitForMetric('U')}</span></div>
             <div className="stat-sub">Avg last 24h</div>
           </div>
           <div className="stat-icon">🔌</div>
@@ -125,7 +126,7 @@ export default function StatCards({ devices }) {
         <div className="row" style={{justifyContent:'space-between'}}>
           <div>
             <div className="stat-title">Current</div>
-            <div className="stat-value"><span className={`sla-band ${level('I', totals.current)}`}></span>{totals.current}{arrow(totals.current, totals.prev?.current)} <span className="stat-unit">A</span></div>
+            <div className="stat-value"><span className={`sla-band ${level('I', totals.current)}`}></span>{toDisplay('I', totals.current).toFixed(1)}{arrow(totals.current, totals.prev?.current)} <span className="stat-unit">{unitForMetric('I')}</span></div>
             <div className="stat-sub">Avg last 24h</div>
           </div>
           <div className="stat-icon">🔋</div>
@@ -135,7 +136,7 @@ export default function StatCards({ devices }) {
         <div className="row" style={{justifyContent:'space-between'}}>
           <div>
             <div className="stat-title">Power Factor</div>
-            <div className="stat-value"><span className={`sla-band ${level('pf', totals.pf/100)}`}></span>{totals.pf}{arrow(totals.pf, totals.prev?.pf)} <span className="stat-unit">%</span></div>
+            <div className="stat-value"><span className={`sla-band ${level('pf', totals.pf/100)}`}></span>{(totals.pf/100).toFixed(2)}{arrow(totals.pf, totals.prev?.pf)} <span className="stat-unit">{unitForMetric('pf')}</span></div>
             <div className="stat-sub">Avg last 24h</div>
           </div>
           <div className="stat-icon">📈</div>

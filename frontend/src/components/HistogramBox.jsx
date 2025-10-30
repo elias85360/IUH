@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { api } from '../services/api.js'
 import { useUiStore } from '../state/filters.js'
 import { chartTheme as T } from '../lib/theme.js'
+import { yTickFormatterFor, unitForMetric, toDisplay } from '../lib/format.js'
 
 function percentile(values, p) {
   const a = values.filter(Number.isFinite).slice().sort((x,y)=>x-y)
@@ -44,25 +45,25 @@ export default function HistogramBox({ deviceId, metric='P' }) {
 
   return (
     <div className="panel">
-      <div className="panel-title">Histogram ({metric})</div>
+      <div className="panel-title">Histogram ({metric}{unitForMetric(metric) ? ' ' + unitForMetric(metric) : ''})</div>
       <div style={{height:220}}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows}>
             <CartesianGrid stroke={T.grid} />
-            <XAxis dataKey={(d)=>d.x.toFixed(1)} stroke={T.axis} interval={2} />
-            <YAxis stroke={T.axis} />
-            <Tooltip />
+            <XAxis dataKey={(d)=> toDisplay(metric, d.x).toFixed(metric==='F'?2: metric==='pf'?2:1)} stroke={T.axis} interval={2} />
+            <YAxis stroke={T.axis} tickFormatter={yTickFormatterFor(metric)} />
+            <Tooltip formatter={(v, name, props)=> [v, `${name}`]} labelFormatter={(label)=> `${label} ${unitForMetric(metric)}`} />
             <Bar dataKey="count" fill={T.series.purple} />
-            {Number.isFinite(perc.p05) && <ReferenceLine x={perc.p05.toFixed(1)} stroke={T.series.warning} />}
-            {Number.isFinite(perc.p50) && <ReferenceLine x={perc.p50.toFixed(1)} stroke={T.series.primary} />}
-            {Number.isFinite(perc.p95) && <ReferenceLine x={perc.p95.toFixed(1)} stroke={T.series.danger} />}
+            {Number.isFinite(perc.p05) && <ReferenceLine x={toDisplay(metric, perc.p05).toFixed(metric==='F'?2: metric==='pf'?2:1)} stroke={T.series.warning} />}
+            {Number.isFinite(perc.p50) && <ReferenceLine x={toDisplay(metric, perc.p50).toFixed(metric==='F'?2: metric==='pf'?2:1)} stroke={T.series.primary} />}
+            {Number.isFinite(perc.p95) && <ReferenceLine x={toDisplay(metric, perc.p95).toFixed(metric==='F'?2: metric==='pf'?2:1)} stroke={T.series.danger} />}
           </BarChart>
         </ResponsiveContainer>
       </div>
       <div className="kpi" style={{marginTop:8}}>
-        <div className="item">P05: <strong>{Number.isFinite(perc.p05)? perc.p05.toFixed(2): '—'}</strong></div>
-        <div className="item">P50: <strong>{Number.isFinite(perc.p50)? perc.p50.toFixed(2): '—'}</strong></div>
-        <div className="item">P95: <strong>{Number.isFinite(perc.p95)? perc.p95.toFixed(2): '—'}</strong></div>
+        <div className="item">P05: <strong>{Number.isFinite(perc.p05)? toDisplay(metric, perc.p05).toFixed(metric==='F'?2: metric==='pf'?2:1): '—'}</strong> {unitForMetric(metric)}</div>
+        <div className="item">P50: <strong>{Number.isFinite(perc.p50)? toDisplay(metric, perc.p50).toFixed(metric==='F'?2: metric==='pf'?2:1): '—'}</strong> {unitForMetric(metric)}</div>
+        <div className="item">P95: <strong>{Number.isFinite(perc.p95)? toDisplay(metric, perc.p95).toFixed(metric==='F'?2: metric==='pf'?2:1): '—'}</strong> {unitForMetric(metric)}</div>
       </div>
     </div>
   )

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { LineChart, Line, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import { chartTheme as T } from '../lib/theme.js'
 import { api } from '../services/api.js'
 import { useUiStore } from '../state/filters.js'
+import { yDomainFor, yTickFormatterFor, timeTickFormatter, bucketForSpan } from '../lib/format.js'
 
 export default function OverviewSparklines({ devices, metricKey='P', title='Power trend (per device)' }) {
   const { anchorNow, period } = useUiStore()
@@ -13,7 +14,7 @@ export default function OverviewSparklines({ devices, metricKey='P', title='Powe
   useEffect(()=>{
     let cancel=false
     async function run(){
-      const bucketMs = Math.max(60*1000, Math.floor((to-from)/120))
+      const bucketMs = bucketForSpan(to-from)
       const list = []
       for (const d of devices) {
         const res = await api.timeseries(d.id, metricKey, { from, to, bucketMs })
@@ -35,7 +36,10 @@ export default function OverviewSparklines({ devices, metricKey='P', title='Powe
             <div style={{height:60}}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={s.points} margin={{ top: 4, right: 6, bottom: 0, left: 0 }} syncId="home">
-                  <Line type="monotone" dataKey="value" stroke={T.series.purple} dot={false} strokeWidth={1} />
+                  {/* Hidden axes to control domain/precision without visual clutter */}
+                  <XAxis dataKey="ts" hide tickFormatter={timeTickFormatter(from, to)} />
+                  <YAxis hide domain={yDomainFor(metricKey, s.points)} tickFormatter={yTickFormatterFor(metricKey)} allowDecimals />
+                  <Line type="monotone" dataKey="value" stroke={T.series.purple} dot={false} strokeWidth={1.2} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>

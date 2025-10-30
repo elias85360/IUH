@@ -11,6 +11,7 @@ export default function RoomContribution({ devices=[], onSelectRoom }) {
   const { anchorNow, period } = useUiStore()
   const { meta } = useAssets()
   const [rows, setRows] = useState([])
+  const [relative, setRelative] = useState(false)
 
   const groups = useMemo(()=>{
     const map = new Map()
@@ -44,16 +45,18 @@ export default function RoomContribution({ devices=[], onSelectRoom }) {
     run(); return ()=>{ cancel=true }
   }, [groups, anchorNow, period])
 
+  const total = rows.reduce((s,r)=>s+r.kwh,0)
+  const view = relative && total>0 ? rows.map(r => ({ ...r, kwh: (r.kwh/total)*100 })) : rows
   return (
     <div className="panel">
-      <div className="panel-title">Contribution by Room (kWh)</div>
+      <div className="panel-header"><div className="panel-title">Contribution by Room ({relative? '%':'kWh'})</div><button className="btn" onClick={()=>setRelative(v=>!v)}>{relative? 'Absolu':'% Relatif'}</button></div>
       <div style={{height:240}}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} layout="vertical" margin={{left: 100}} onClick={(e)=>{ const r=e?.activePayload?.[0]?.payload?.room; if (r && onSelectRoom) onSelectRoom(r) }}>
+          <BarChart data={view} layout="vertical" margin={{left: 100}} onClick={(e)=>{ const r=e?.activePayload?.[0]?.payload?.room; if (r && onSelectRoom) onSelectRoom(r) }}>
             <CartesianGrid stroke={T.grid} />
-            <XAxis type="number" stroke={T.axis} />
+            <XAxis type="number" stroke={T.axis} tickFormatter={(v)=> relative? `${v.toFixed(1)}%` : v.toFixed(1)} />
             <YAxis type="category" dataKey="room" stroke={T.axis} width={120} />
-            <Tooltip />
+            <Tooltip formatter={(v)=> relative? [v.toFixed(1),'%'] : [Number(v).toFixed(1),'kWh']} />
             <Bar dataKey="kwh" fill={COLORS[0]} cursor={onSelectRoom? 'pointer':'default'} />
           </BarChart>
         </ResponsiveContainer>

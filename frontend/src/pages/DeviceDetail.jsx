@@ -3,6 +3,11 @@ import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, BarChart, Bar, Brush } from 'recharts'
 import { chartTheme as T } from '../lib/theme.js'
+import { Line as ChartLine } from 'react-chartjs-2'
+import { registerBaseCharts, registerZoom } from '../lib/chartjs-setup.js'
+// Ensure Chart.js base scales (including 'time') are registered before first render
+try { registerBaseCharts() } catch {}
+import { yDomainFor, yTickFormatterFor, timeTickFormatter, unitForMetric, formatValue, toDisplay, targetPointsForSpan } from '../lib/format.js'
 import { format } from 'date-fns'
 import { useUiStore } from '../state/filters.js'
 import CorrelationMatrix from '../components/CorrelationMatrix.jsx'
@@ -30,7 +35,8 @@ function Series({ deviceId, metricKey, from, to, bucketMs, valueMin, valueMax })
     let cancel = false
     const controller = new AbortController()
     async function run() {
-      const res = await api.timeseries(deviceId, metricKey, { from, to, bucketMs: bucketMs || Math.floor((to - from) / 200), signal: controller.signal, timeoutMs: 15000 })
+      const target = targetPointsForSpan(to-from)
+      const res = await api.timeseries(deviceId, metricKey, { from, to, bucketMs: bucketMs || Math.floor((to - from) / target), signal: controller.signal, timeoutMs: 15000 })
       let pts = res.points || []
       // Apply optional value range filtering if provided.  Only
       // points whose numeric value lies between valueMin and
@@ -72,11 +78,37 @@ export default function DeviceDetail({ devices, metrics }) {
   const { live, toggleLive } = useUiStore()
   // State used to force chart re-renders when resetting zoom
   const [resetKey, setResetKey] = useState(0)
+  useEffect(()=>{ try { const s = localStorage.getItem('adv-view'); if (s==='1') setAdvancedView(true); const u = localStorage.getItem('adv-ultra'); if (u==='1') setUltraFine(true) } catch {} }, [])
   // Search params for drilldown metric
   const [searchParams] = useSearchParams()
   const from = anchorNow - period.ms
   const to = anchorNow
   const modalPanelRef = useRef(null)
+  const [advancedView, setAdvancedView] = useState(false)
+  const [ultraFine, setUltraFine] = useState(false)
+
+  // Hi‑res series fetcher for enlarged charts (smaller bucket → more points)
+  function useHiResSeries({ deviceId, metricKey, from, to, enabled, targetPoints = 800, minBucketMs = 5000 }) {
+    const [pts, setPts] = useState([])
+    useEffect(() => {
+      let cancel = false
+      const controller = new AbortController()
+      async function run() {
+        if (!enabled) { setPts([]); return }
+        const bucketMs = Math.max(minBucketMs, Math.floor((to - from) / Math.max(10, targetPoints)))
+        try {
+          const res = await api.timeseries(deviceId, metricKey, { from, to, bucketMs, signal: controller.signal, timeoutMs: 20000 })
+          const arr = (res.points || [])
+          if (!cancel) setPts(arr)
+        } catch {
+          if (!cancel) setPts([])
+        }
+      }
+      run();
+      return () => { cancel = true; try { controller.abort() } catch {} }
+    }, [deviceId, metricKey, from, to, enabled, targetPoints, minBucketMs])
+    return pts
+  }
 
   const params = { bucketMs: options.bucketMs }
   const commonArgs = { from, to, ...params, valueMin, valueMax }
@@ -88,6 +120,69 @@ export default function DeviceDetail({ devices, metrics }) {
   const pf = Series({ deviceId: id, metricKey: 'pf', ...commonArgs })
   const temp = Series({ deviceId: id, metricKey: 'temp', ...commonArgs })
   const humid = Series({ deviceId: id, metricKey: 'humid', ...commonArgs })
+
+  // Hi‑res data only when modal is open (precision boost)
+  const needUI = modal.open && modal.type === 'UI'
+  const needP = modal.open && modal.type === 'P'
+  const needPfF = modal.open && modal.type === 'pfF'
+  const needTH = modal.open && modal.type === 'tH'
+  const targetPts = advancedView ? (ultraFine ? 3000 : 1600) : 800
+  const minBucket = advancedView ? (ultraFine ? 250 : 500) : 5000
+  const U_hi = useHiResSeries({ deviceId: id, metricKey: 'U', from, to, enabled: needUI, targetPoints: targetPts, minBucketMs: minBucket })
+  const I_hi = useHiResSeries({ deviceId: id, metricKey: 'I', from, to, enabled: needUI, targetPoints: targetPts, minBucketMs: minBucket })
+  const P_hi = useHiResSeries({ deviceId: id, metricKey: 'P', from, to, enabled: needP, targetPoints: targetPts, minBucketMs: minBucket })
+  const pf_hi = useHiResSeries({ deviceId: id, metricKey: 'pf', from, to, enabled: needPfF, targetPoints: targetPts, minBucketMs: minBucket })
+  const F_hi = useHiResSeries({ deviceId: id, metricKey: 'F', from, to, enabled: needPfF, targetPoints: targetPts, minBucketMs: minBucket })
+  const temp_hi = useHiResSeries({ deviceId: id, metricKey: 'temp', from, to, enabled: needTH, targetPoints: targetPts, minBucketMs: minBucket })
+  const humid_hi = useHiResSeries({ deviceId: id, metricKey: 'humid', from, to, enabled: needTH, targetPoints: targetPts, minBucketMs: minBucket })
+
+  // Chart.js advanced modal chart component
+  function AdvancedModalChart({ id, series, thresholds, from, to, resetKey }) {
+    const data = {
+      datasets: series.map(s => ({
+        label: s.label,
+        data: (s.data||[]).map(p => ({ x: Number(p.ts), y: Number(p.value) })),
+        borderColor: s.color,
+        backgroundColor: s.color,
+        pointRadius: 0,
+        borderWidth: 1.2,
+        tension: 0.25,
+      })).concat(series.flatMap(s => {
+        const th = thresholds[s.key] || {}
+        const out = []
+        if (Number.isFinite(th.warn)) out.push({
+          label: `${s.label} warn`, borderColor: '#f59e0b', borderDash: [4,2], pointRadius:0, parsing:false,
+          data: [{ x: from, y: th.warn }, { x: to, y: th.warn }], showLine: true,
+        })
+        if (Number.isFinite(th.crit)) out.push({
+          label: `${s.label} crit`, borderColor: '#ef4444', borderDash: [4,2], pointRadius:0, parsing:false,
+          data: [{ x: from, y: th.crit }, { x: to, y: th.crit }], showLine: true,
+        })
+        return out
+      })),
+    }
+    const options = {
+      parsing: false,
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { type: 'time', ticks: { maxTicksLimit: 12 } },
+        y: { ticks: { maxTicksLimit: 10 } },
+      },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: { intersect: false, mode: 'index' },
+        zoom: { zoom: { wheel: { enabled: true }, drag: { enabled: true }, mode: 'x' }, pan: { enabled: true, mode: 'x' } },
+        decimation: { enabled: true, algorithm: 'min-max' },
+      },
+    }
+    return (
+      <div style={{position:'relative', width:'100%', height:'100%'}}>
+        <ChartLine key={String(resetKey||0)} data={data} options={options} />
+      </div>
+    )
+  }
 
   // If a specific metric is requested in the query string, open the corresponding modal on mount
   useEffect(() => {
@@ -162,11 +257,13 @@ export default function DeviceDetail({ devices, metrics }) {
     return Array.from(map.values()).sort((x,y)=>x.ts-y.ts)
   }
   const fmt = (ts) => format(new Date(ts),'HH:mm')
+  const timeFmt = timeTickFormatter(from, to)
   const stat = {
     U: computeStats(U), I: computeStats(I), P: computeStats(P), E: computeStats(Eser), F: computeStats(F), pf: computeStats(pf), temp: computeStats(temp), humid: computeStats(humid)
   }
   const [effTh, setEffTh] = useState(null)
   useEffect(()=>{ (async()=>{ try{ const r=await api.thresholdsEffective(id); setEffTh(r.thresholds||null) }catch{ setEffTh(null) } })() }, [id])
+  useEffect(()=>{ if (modal.open && advancedView) { try { registerBaseCharts(); registerZoom() } catch {} } }, [modal.open, advancedView])
   const thresholds = effTh || {
     U: getThreshold(id,'U'), I: getThreshold(id,'I'), P: getThreshold(id,'P'), F: getThreshold(id,'F'), pf: getThreshold(id,'pf'), temp: getThreshold(id,'temp'), humid: getThreshold(id,'humid')
   }
@@ -381,9 +478,9 @@ export default function DeviceDetail({ devices, metrics }) {
               <LineChart data={mergeTwo(U, I, 'U', 'I')} syncId={`dev-${id}`}
                 onMouseMove={(e)=>{ const ts = e && e.activeLabel; if (ts) setHoverTs(ts) }} onMouseLeave={()=>clearHover()}>
                 <CartesianGrid stroke={T.grid} />
-                <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={14} minTickGap={10}/>
-                <YAxis yAxisId={0} stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
-                <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
+                <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} tickCount={12} minTickGap={12}/>
+                <YAxis yAxisId={0} stroke={T.axis} domain={yDomainFor('U', merge(U))} tickCount={8} allowDecimals tickFormatter={yTickFormatterFor('U')} />
+                <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={yDomainFor('I', merge(I))} tickCount={8} allowDecimals tickFormatter={yTickFormatterFor('I')} />
                 <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>{
                   const v = Number(val)
                   const tx = name==='U'? thresholds.U : thresholds.I
@@ -392,7 +489,7 @@ export default function DeviceDetail({ devices, metrics }) {
                   let delta = ''
                   if (dir==='above') { if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(1)})` }
                   else { if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(1)})` }
-                  return [v, `${name}${delta}`]
+                  return [formatValue(name, v), `${name}${delta}`]
                 }} />
                 {(missingMap.U||[]).map((g,i)=> (<ReferenceArea key={'mu'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
                 {(missingMap.I||[]).map((g,i)=> (<ReferenceArea key={'mi'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
@@ -426,8 +523,8 @@ export default function DeviceDetail({ devices, metrics }) {
               <LineChart data={merge(P)} syncId={`dev-${id}`}
                 onMouseMove={(e)=>{ const ts = e && e.activeLabel; if (ts) setHoverTs(ts) }} onMouseLeave={()=>clearHover()}>
                 <CartesianGrid stroke={T.grid} />
-                <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={14} minTickGap={10}/>
-                <YAxis stroke={T.axis} domain={["auto","auto"]} tickCount={12} allowDecimals />
+                <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} tickCount={12} minTickGap={12}/>
+                <YAxis stroke={T.axis} domain={yDomainFor('P', merge(P))} tickCount={10} allowDecimals tickFormatter={yTickFormatterFor('P')} />
                 <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val)=>{
                   const v = Number(val)
                   const th = thresholds.P || {}
@@ -440,7 +537,7 @@ export default function DeviceDetail({ devices, metrics }) {
                     if (th.crit!=null && v<=th.crit) delta = ` (${(v-th.crit).toFixed(0)}) vs crit`
                     else if (th.warn!=null && v<=th.warn) delta = ` (${(v-th.warn).toFixed(0)}) vs warn`
                   }
-                  return [v, `P${delta}`]
+                  return [formatValue('P', v), `P${delta}`]
                 }} />
                 {hoverTs && <ReferenceLine x={hoverTs} stroke={T.brush} strokeDasharray="3 3" />}
                 {(missingMap.P||[]).map((g,i)=> (<ReferenceArea key={i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.08} />))}
@@ -480,27 +577,27 @@ export default function DeviceDetail({ devices, metrics }) {
             </ResponsiveContainer>
           </div>
           <div className="kpi" style={{marginTop:8}}>
-            <div className="item">P last: <strong>{stat.P.last?.toFixed(0)??'—'}</strong> W</div>
-            <div className="item">min/max: <strong>{stat.P.min?.toFixed(0)??'—'} / {stat.P.max?.toFixed(0)??'—'}</strong></div>
-            <div className="item">avg: <strong>{stat.P.avg?.toFixed(0)??'—'}</strong></div>
+            <div className="item">P last: <strong>{Number.isFinite(stat.P.last)? (toDisplay('P', stat.P.last).toFixed(1) + ' ' + unitForMetric('P')) : '—'}</strong></div>
+            <div className="item">min/max: <strong>{Number.isFinite(stat.P.min)? toDisplay('P', stat.P.min).toFixed(1): '—'} / {Number.isFinite(stat.P.max)? toDisplay('P', stat.P.max).toFixed(1): '—'}</strong> {unitForMetric('P')}</div>
+            <div className="item">avg: <strong>{Number.isFinite(stat.P.avg)? toDisplay('P', stat.P.avg).toFixed(1): '—'}</strong> {unitForMetric('P')}</div>
           </div>
         </div>
         <div className="panel" style={{cursor:'zoom-in'}}>
           <div className="panel-title">Energy (kWh)</div>
           <div style={{height:'var(--chart-h)'}}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={merge(Eser).map(p=>({ ...p, value: Number(p.value)/1000 }))} syncId={`dev-${id}`}>
+              <LineChart data={merge(Eser)} syncId={`dev-${id}`}>
                 <CartesianGrid stroke={T.grid} />
-                <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={14} minTickGap={10}/>
-                <YAxis stroke={T.axis} tickCount={12} allowDecimals />
-                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
-                <Line type="monotone" dataKey="value" stroke={T.series.primary} dot={false} name="E (kWh)" />
+                <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} tickCount={12} minTickGap={12}/>
+                <YAxis stroke={T.axis} tickCount={10} allowDecimals domain={yDomainFor('E', merge(Eser))} tickFormatter={yTickFormatterFor('E')} />
+                <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val)=>[formatValue('E', val), unitForMetric('E')]} />
+                <Line type="monotone" dataKey="value" stroke={T.series.primary} dot={false} name="E" />
                 <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} />
               </LineChart>
             </ResponsiveContainer>
           </div>
           <div className="kpi" style={{marginTop:8}}>
-            <div className="item">E last: <strong>{stat.E.last?.toFixed(2)??'—'}</strong> kWh</div>
+            <div className="item">E last: <strong>{Number.isFinite(stat.E.last)? (toDisplay('E', stat.E.last).toFixed(1) + ' ' + unitForMetric('E')) : '—'}</strong></div>
           </div>
         </div>
         <div className="panel" onClick={()=>setModal({ type:'pfF', open:true })} style={{cursor:'zoom-in'}}>
@@ -509,9 +606,9 @@ export default function DeviceDetail({ devices, metrics }) {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={mergeTwo(pf, F, 'pf', 'F')} syncId={`dev-${id}`}>
                 <CartesianGrid stroke={T.grid} />
-                <XAxis dataKey="ts" stroke={T.axis} tickFormatter={fmt} tickCount={14} minTickGap={10}/>
-                <YAxis yAxisId={0} stroke={T.axis} domain={[0,1]} tickCount={11} allowDecimals tickFormatter={(v)=>v.toFixed(2)}/>
-                <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
+                <XAxis dataKey="ts" stroke={T.axis} tickFormatter={timeFmt} tickCount={12} minTickGap={12}/>
+                <YAxis yAxisId={0} stroke={T.axis} domain={yDomainFor('pf', merge(pf))} tickCount={8} allowDecimals tickFormatter={yTickFormatterFor('pf')}/>
+                <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={yDomainFor('F', merge(F))} tickCount={8} allowDecimals tickFormatter={yTickFormatterFor('F')} />
                 <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>{
                   const v = Number(val)
                   const tx = name==='pf'? thresholds.pf : thresholds.F
@@ -520,7 +617,7 @@ export default function DeviceDetail({ devices, metrics }) {
                   let delta = ''
                   if (dir==='above') { if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(2)})`; else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(2)})` }
                   else { if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(2)})`; else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(2)})` }
-                  return [v, `${name}${delta}`]
+                  return [formatValue(name, v), `${name}${delta}`]
                 }} />
                 {(missingMap.pf||[]).map((g,i)=> (<ReferenceArea key={'mpf'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
                 {(missingMap.F||[]).map((g,i)=> (<ReferenceArea key={'mf'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
@@ -556,9 +653,9 @@ export default function DeviceDetail({ devices, metrics }) {
               <LineChart data={mergeTwo(temp, humid, 'temp', 'humid')} syncId={`dev-${id}`}
                 onMouseMove={(e)=>{ const ts = e && e.activeLabel; if (ts) setHoverTs(ts) }} onMouseLeave={()=>clearHover()}>
                 <CartesianGrid stroke={T.grid} />
-                <XAxis dataKey="ts" stroke={T.axis} tickFormatter={fmt} tickCount={14} minTickGap={10}/>
-                <YAxis yAxisId={0} stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
-                <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={["dataMin","dataMax"]} tickCount={8} allowDecimals />
+                <XAxis dataKey="ts" stroke={T.axis} tickFormatter={timeFmt} tickCount={12} minTickGap={12}/>
+                <YAxis yAxisId={0} stroke={T.axis} domain={yDomainFor('temp', merge(temp))} tickCount={8} allowDecimals tickFormatter={yTickFormatterFor('temp')} />
+                <YAxis yAxisId={1} orientation="right" stroke={T.axis} domain={yDomainFor('humid', merge(humid))} tickCount={8} allowDecimals tickFormatter={yTickFormatterFor('humid')} />
                 <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>{
                   const v = Number(val)
                   const tx = name==='temp'? thresholds.temp : thresholds.humid
@@ -567,7 +664,7 @@ export default function DeviceDetail({ devices, metrics }) {
                   let delta = ''
                   if (dir==='above') { if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(1)})` }
                   else { if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(1)})`; else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(1)})` }
-                  return [v, `${name}${delta}`]
+                  return [formatValue(name, v), `${name}${delta}`]
                 }} />
                 {(missingMap.temp||[]).map((g,i)=> (<ReferenceArea key={'mt'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
                 {(missingMap.humid||[]).map((g,i)=> (<ReferenceArea key={'mh'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />))}
@@ -606,29 +703,57 @@ export default function DeviceDetail({ devices, metrics }) {
           onKeyDown={(e)=>{ if (e.key==='Escape') setModal({open:false}) }}>
           <div className="panel" style={{width:'90%', height:'70%'}} onClick={(e)=>e.stopPropagation()} tabIndex={0} id="device-modal-panel">
             {/* Modal header with reset button */}
-            <div className="row" style={{justifyContent:'flex-end', marginBottom:8}}>
+            <div className="row" style={{justifyContent:'space-between', marginBottom:8}}>
+              <div className="row" style={{gap:8}}>
+                {advancedView && <span className="badge">Analyse avancée</span>}
+                {/* Show current bucket granularity if available */}
+                <span className="badge">Granularité: {
+                  modal.type==='UI' ? ((U_hi.length? Math.floor((to-from)/Math.max(1,U_hi.length)) : (options.bucketMs||Math.floor((to-from)/200))))
+                  : modal.type==='P' ? ((P_hi.length? Math.floor((to-from)/Math.max(1,P_hi.length)) : (options.bucketMs||Math.floor((to-from)/200))))
+                  : modal.type==='pfF' ? ((pf_hi.length? Math.floor((to-from)/Math.max(1,pf_hi.length)) : (options.bucketMs||Math.floor((to-from)/200))))
+                  : ((temp_hi.length? Math.floor((to-from)/Math.max(1,temp_hi.length)) : (options.bucketMs||Math.floor((to-from)/200))))
+                } ms</span>
+                {advancedView && (<span className="badge">{ultraFine ? 'Ultra fin' : 'Standard'}</span>)}
+              </div>
               <button className="btn" onClick={() => setResetKey(k => k + 1)}>Reset zoom</button>
+              <button className={`btn ${advancedView ? 'primary' : ''}`} onClick={() => setAdvancedView(v => { try { localStorage.setItem('adv-view', (!v)? '1':'0') } catch {}; if (v===false) { try { const ultra = localStorage.getItem('adv-ultra'); setUltraFine(ultra==='1') } catch {} } return !v })} title="Affiche la courbe avec une granularité plus fine">Analyse avancée</button>
+              {advancedView && (
+                <button className={`btn ${ultraFine ? 'primary' : ''}`} onClick={() => setUltraFine(u => { try { localStorage.setItem('adv-ultra', (!u)? '1':'0') } catch {}; return !u })} title="Encore plus de points (min bucket ≈ 250ms)">Ultra fin</button>
+              )}
             </div>
-            {modal.type==='UI' && (
+            {modal.type==='UI' && !advancedView && (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart key={resetKey} data={mergeTwo(U, I, 'U', 'I')}>
+                <LineChart key={resetKey} data={mergeTwo((U_hi.length? U_hi : U), (I_hi.length? I_hi : I), 'U', 'I')}>
                   <CartesianGrid stroke={T.grid} />
-                  <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={12}/>
-                  <YAxis stroke={T.axis} tickCount={10}/>
-                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
-                  <Line type="monotone" dataKey="U" stroke={T.series.purple} dot={false} />
-                  <Line type="monotone" dataKey="I" stroke={T.series.cyan} dot={false} />
+                  <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} minTickGap={10} tickCount={12}/>
+                  <YAxis yAxisId={0} stroke={T.axis} tickCount={10} domain={yDomainFor('U', merge(U))} tickFormatter={yTickFormatterFor('U')} allowDecimals />
+                  <YAxis yAxisId={1} orientation="right" stroke={T.axis} tickCount={10} domain={yDomainFor('I', merge(I))} tickFormatter={yTickFormatterFor('I')} allowDecimals />
+                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>[formatValue(name, val), name]} />
+                  <ReferenceLine y={thresholds.U?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine y={thresholds.U?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={1} y={thresholds.I?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={1} y={thresholds.I?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                  <Line type="monotone" yAxisId={0} dataKey="U" stroke={T.series.purple} dot={false} connectNulls />
+                  <Line type="monotone" yAxisId={1} dataKey="I" stroke={T.series.cyan} dot={false} connectNulls />
                   <Brush dataKey="ts" height={24} stroke={T.brush} travellerWidth={12} />
                 </LineChart>
               </ResponsiveContainer>
             )}
-            {modal.type==='P' && (
+            {modal.type==='UI' && advancedView && (
+              <AdvancedModalChart id="ui" series={[
+                  { key:'U', label:'U', color:T.series.purple, data:(U_hi.length? U_hi : U) },
+                  { key:'I', label:'I', color:T.series.cyan, data:(I_hi.length? I_hi : I) },
+                ]} thresholds={thresholds} from={from} to={to} resetKey={resetKey} />
+            )}
+            {modal.type==='P' && !advancedView && (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart key={resetKey} data={merge(P)} onMouseMove={(e)=>{ const ts = e && e.activeLabel; if (ts) setHoverTs(ts) }} onMouseLeave={()=>clearHover()}>
+                <LineChart key={resetKey} data={merge(P_hi.length? P_hi : P)} onMouseMove={(e)=>{ const ts = e && e.activeLabel; if (ts) setHoverTs(ts) }} onMouseLeave={()=>clearHover()}>
                   <CartesianGrid stroke={T.grid} />
-                  <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={12}/>
-                  <YAxis stroke={T.axis} tickCount={10}/>
-                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
+                  <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} minTickGap={10} tickCount={12}/>
+                  <YAxis stroke={T.axis} tickCount={10} domain={yDomainFor('P', merge(P))} tickFormatter={yTickFormatterFor('P')} allowDecimals />
+                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val)=>[formatValue('P', val), unitForMetric('P')]} />
+                  <ReferenceLine y={thresholds.P?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine y={thresholds.P?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
                   <Line type="monotone" dataKey="value" stroke={T.series.secondary} dot={false} />
                   {options.showBaseline && <Line type="monotone" dataKey="value" data={baselineSeries} stroke={T.series.gray} dot={false} name="baseline" strokeDasharray="4 3" />}
                   {options.showForecast && forecastP && forecastP.length>0 && (
@@ -638,31 +763,56 @@ export default function DeviceDetail({ devices, metrics }) {
                 </LineChart>
               </ResponsiveContainer>
             )}
-            {modal.type==='pfF' && (
+            {modal.type==='P' && advancedView && (
+              <AdvancedModalChart id="p" series={[{ key:'P', label:'P', color:T.series.secondary, data:(P_hi.length? P_hi : P) }]} thresholds={thresholds} from={from} to={to} resetKey={resetKey} />
+            )}
+            {modal.type==='pfF' && !advancedView && (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart key={resetKey} data={mergeTwo(pf, F, 'pf', 'F')}>
+                <LineChart key={resetKey} data={mergeTwo((pf_hi.length? pf_hi : pf), (F_hi.length? F_hi : F), 'pf', 'F')}>
                   <CartesianGrid stroke={T.grid} />
-                  <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={12}/>
-                  <YAxis stroke={T.axis} tickCount={10}/>
-                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
-                  <Line type="monotone" dataKey="pf" stroke={T.series.warning} dot={false} />
-                  <Line type="monotone" dataKey="F" stroke={T.series.blue} dot={false} />
+                  <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} tickCount={12} minTickGap={10}/>
+                  <YAxis yAxisId={0} stroke={T.axis} tickCount={10} domain={yDomainFor('pf', merge(pf))} tickFormatter={yTickFormatterFor('pf')} allowDecimals />
+                  <YAxis yAxisId={1} orientation="right" stroke={T.axis} tickCount={10} domain={yDomainFor('F', merge(F))} tickFormatter={yTickFormatterFor('F')} allowDecimals />
+                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>[formatValue(name, val), name]} />
+                  <ReferenceLine yAxisId={0} y={thresholds.pf?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={0} y={thresholds.pf?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={1} y={thresholds.F?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={1} y={thresholds.F?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                  <Line type="monotone" yAxisId={0} dataKey="pf" stroke={T.series.warning} dot={false} />
+                  <Line type="monotone" yAxisId={1} dataKey="F" stroke={T.series.blue} dot={false} />
                   <Brush dataKey="ts" height={24} stroke={T.brush} travellerWidth={12} />
                 </LineChart>
               </ResponsiveContainer>
             )}
-            {modal.type==='tH' && (
+            {modal.type==='pfF' && advancedView && (
+              <AdvancedModalChart id="pfF" series={[
+                { key:'pf', label:'pf', color:T.series.warning, data:(pf_hi.length? pf_hi : pf) },
+                { key:'F', label:'F', color:T.series.blue, data:(F_hi.length? F_hi : F) },
+              ]} thresholds={thresholds} from={from} to={to} resetKey={resetKey} />
+            )}
+            {modal.type==='tH' && !advancedView && (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart key={resetKey} data={mergeTwo(temp, humid, 'temp', 'humid')}>
+                <LineChart key={resetKey} data={mergeTwo((temp_hi.length? temp_hi : temp), (humid_hi.length? humid_hi : humid), 'temp', 'humid')}>
                   <CartesianGrid stroke={T.grid} />
-                  <XAxis dataKey="ts" tickFormatter={fmt} stroke={T.axis} tickCount={12}/>
-                  <YAxis stroke={T.axis} tickCount={10}/>
-                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} />
-                  <Line type="monotone" dataKey="temp" stroke={T.series.danger} dot={false} />
-                  <Line type="monotone" dataKey="humid" stroke={T.series.cyan} dot={false} />
+                  <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} tickCount={12} minTickGap={10}/>
+                  <YAxis yAxisId={0} stroke={T.axis} tickCount={10} domain={yDomainFor('temp', merge(temp))} tickFormatter={yTickFormatterFor('temp')} allowDecimals />
+                  <YAxis yAxisId={1} orientation="right" stroke={T.axis} tickCount={10} domain={yDomainFor('humid', merge(humid))} tickFormatter={yTickFormatterFor('humid')} allowDecimals />
+                  <Tooltip labelFormatter={(v)=>new Date(v).toLocaleString()} formatter={(val, name)=>[formatValue(name, val), name]} />
+                  <ReferenceLine yAxisId={0} y={thresholds.temp?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={0} y={thresholds.temp?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={1} y={thresholds.humid?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                  <ReferenceLine yAxisId={1} y={thresholds.humid?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                  <Line type="monotone" yAxisId={0} dataKey="temp" stroke={T.series.danger} dot={false} />
+                  <Line type="monotone" yAxisId={1} dataKey="humid" stroke={T.series.cyan} dot={false} />
                   <Brush dataKey="ts" height={24} stroke={T.brush} travellerWidth={12} />
                 </LineChart>
               </ResponsiveContainer>
+            )}
+            {modal.type==='tH' && advancedView && (
+              <AdvancedModalChart id="tH" series={[
+                { key:'temp', label:'temp', color:T.series.danger, data:(temp_hi.length? temp_hi : temp) },
+                { key:'humid', label:'humid', color:T.series.cyan, data:(humid_hi.length? humid_hi : humid) },
+              ]} thresholds={thresholds} from={from} to={to} resetKey={resetKey} />
             )}
           </div>
         </div>

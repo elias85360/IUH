@@ -1,4 +1,4 @@
-# Multi-stage build to produce a static SPA served by Nginx
+# Multi-stage build to produce a static SPA served by Nginx 
 FROM node:20-alpine AS build-frontend
 WORKDIR /frontend
 # Accept Vite build-time variables via build args (no extra .env files)

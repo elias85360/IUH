@@ -1,13 +1,7 @@
 import { api } from '../services/api.js'
+import { bucketForSpan } from './format.js'
 
-function bucketFor(ms) {
-  // Aim ~ 120 points max
-  const target = 120
-  const b = Math.max(60*1000, Math.floor(ms/target))
-  // Round to minute or hour chunks
-  if (b < 60*60*1000) return Math.floor(b/(60*1000))*(60*1000)
-  return Math.floor(b/(60*60*1000))*(60*60*1000)
-}
+function bucketFor(ms) { return bucketForSpan(ms) }
 
 export async function prefetchHome(devices, period) {
   if (!devices || !devices.length) return

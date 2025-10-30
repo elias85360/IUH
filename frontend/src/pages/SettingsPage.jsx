@@ -9,12 +9,13 @@ export default function SettingsPage() {
   const metrics = ['U','I','P','E','F','pf','temp','humid']
   const [tab, setTab] = useState('global') // global | devices | integrations | auth | flags | apikey | wizard
   const [defaults, setDefaults] = useState({})
+  const [deadbandPct, setDeadbandPct] = useState('')
   const [kpis, setKpis] = useState({})
   const [status, setStatus] = useState(null)
   const [testKey, setTestKey] = useState('')
   const [wiz, setWiz] = useState({ scope: 'all', warnPct: 20, critPct: 40, metrics: ['P','U','I','temp','pf'] })
 
-  useEffect(()=>{ (async()=>{ try { const s = await api.getThresholds(); setDefaults(s.global||{}) } catch {} })() }, [])
+  useEffect(()=>{ (async()=>{ try { const s = await api.getThresholds(); setDefaults(s.global||{}); setDeadbandPct(String(s?.options?.deadbandPct ?? '')) } catch {} })() }, [])
   useEffect(()=>{ (async()=>{ const out={}; for (const d of devices){ try{ const r=await api.kpis(d.id); out[d.id]=r.kpis||{} }catch{} } setKpis(out) })() }, [devices])
   useEffect(()=>{ (async()=>{ try { const s = await api.adminStatus(); setStatus(s) } catch {} })() }, [])
 
@@ -85,6 +86,12 @@ export default function SettingsPage() {
             <option value="fr">fr</option>
             <option value="en">en</option>
           </select>
+        </label>
+        <label className="row" style={{gap:6}}>
+          Deadband (%)
+          <input className="input" style={{width:80}} type="number" min={0} max={50} step={0.5} value={deadbandPct}
+            onChange={(e)=>setDeadbandPct(e.target.value)} placeholder="5" />
+          <button className="btn" onClick={async()=>{ try { const v=Number(deadbandPct); if (!Number.isFinite(v)||v<0){ alert('Valeur invalide'); return } await api.putThresholds({ options: { deadbandPct: v } }); alert('Deadband mis à jour') } catch { alert('Échec de mise à jour') } }}>Save</button>
         </label>
         <label className="row" style={{gap:6}}>
           Period

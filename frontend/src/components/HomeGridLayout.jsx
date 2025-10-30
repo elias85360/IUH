@@ -32,6 +32,7 @@ function readLayout() {
 
 export default function HomeGridLayout({ components }) {
   const [layout, setLayout] = useState(readLayout())
+  const [precise, setPrecise] = useState(() => { try { return localStorage.getItem('home-precise')==='1' } catch { return false } })
 
   const layouts = { lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }
   const cols = { lg: 12, md: 12, sm: 12, xs: 12, xxs: 12 }
@@ -56,7 +57,11 @@ export default function HomeGridLayout({ components }) {
 
 
   return (
-    <ResponsiveGridLayout
+    <>
+      <div className="row" style={{justifyContent:'flex-end', margin:'8px 0'}}>
+        <button className={`btn ${precise? 'primary':''}`} onClick={()=>{ try{ const next=!precise; setPrecise(next); localStorage.setItem('home-precise', next?'1':'0') }catch{}; window.location.reload() }} title="Augmente la précision (bucket plus fin)">Précision</button>
+      </div>
+      <ResponsiveGridLayout
       className="layout"
       layouts={layouts}
       cols={cols}
@@ -70,5 +75,6 @@ export default function HomeGridLayout({ components }) {
     >
       {layout.map(renderItem)}
     </ResponsiveGridLayout>
+    </>
   )
 }

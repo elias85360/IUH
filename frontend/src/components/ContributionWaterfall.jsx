@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, LabelList } from 'recharts'
 import { useUiStore } from '../state/filters.js'
 import { fetchEnergyBuckets } from '../lib/energy.js'
 import { chartTheme as T } from '../lib/theme.js'
@@ -34,6 +34,7 @@ export default function ContributionWaterfall({ devices=[], top=6, title='Contri
   }, [devices, anchorNow, period])
 
   const keys = data.length? Object.keys(data[0]) : []
+  const total = data.length? keys.reduce((s,k)=> s + Number(data[0][k]||0), 0) : 0
 
   return (
     <div className="panel">
@@ -47,7 +48,14 @@ export default function ContributionWaterfall({ devices=[], top=6, title='Contri
             <Tooltip />
             <Legend />
             {keys.map((k,idx)=> (
-              <Bar key={k} dataKey={k} stackId="1" fill={COLORS[idx%COLORS.length]} />
+              <Bar key={k} dataKey={k} stackId="1" fill={COLORS[idx%COLORS.length]}>
+                {/* Simple labels with value and % */}
+                <LabelList dataKey={k} position="insideTop" formatter={(v)=>{
+                  const val = Number(v)||0
+                  const pct = total? ` (${((val/total)*100).toFixed(1)}%)` : ''
+                  return `${val.toFixed(1)}${pct}`
+                }} />
+              </Bar>
             ))}
           </BarChart>
         </ResponsiveContainer>

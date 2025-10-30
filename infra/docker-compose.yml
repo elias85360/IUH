@@ -1,4 +1,17 @@
 services:
+  keycloak-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   db:
     image: timescale/timescaledb:2.14.2-pg14
     environment:
@@ -19,18 +32,27 @@ services:
       - default
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.2
-    command: ["start-dev","--http-port=8080","--import-realm"]
+    command: ["start","--http-enabled=true","--import-realm"]
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-      # Advertise frontend URL so discovery/jwks uses localhost for browser
-      # (backend overrides JWKS URL anyway; this helps consistency)
-      KC_HOSTNAME: localhost
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_SCHEMA: public
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      # Public hostname (set to your VPS domain in prod)
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-localhost}
+      #KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-dashboard.mondomaine.com}
       KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+      KC_HOSTNAME_STRICT: "false"
     ports: ["8080:8080"]
     volumes:
       - ./keycloak/realm-iot.json:/opt/keycloak/data/import/realm-iot.json:ro
-    depends_on: [db]
+    depends_on: [keycloak-db]
     networks:
       - default
   api:
@@ -55,6 +77,7 @@ services:
       RATE_LIMIT: 1000/1m
       # CORS (serving SPA from same host via nginx; not strictly needed)
       CORS_ORIGIN: http://localhost
+      #CORS_ORIGIN: http://dashboard.mondomaine.com
       # Observability
       LOG_LEVEL: info
       # Ingestion: Kienlab via nginx proxy
@@ -147,8 +170,10 @@ services:
       args:
         # Inject Vite auth config at build time (no extra .env files)
         VITE_OIDC_ISSUER_URL: "http://localhost:8080/realms/iot"
+        #VITE_OIDC_ISSUER_URL: "http://dashboard.mondomaine.com:8080/realms/iot"
         VITE_OIDC_CLIENT_ID: "iot-dashboard"
         VITE_OIDC_REDIRECT_URI: "http://localhost"
+        #VITE_OIDC_REDIRECT_URI: "http://dashboard.mondomaine.com"
         VITE_REQUIRE_AUTH: "1"
         # Optional explicit API base (normally not needed behind nginx)
         # VITE_API_BASE: ""
@@ -180,6 +205,7 @@ volumes:
   mosquitto_log: {}
   api_data: {}
   api_logs: {}
+  keycloak_db_data: {}
 
 networks:
   default:
