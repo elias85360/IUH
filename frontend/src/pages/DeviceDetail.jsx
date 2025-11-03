@@ -28,7 +28,9 @@ import { computeStats, rollingZscore, toCsv, download } from '../lib/stats.js'
 import { toJson, downloadText } from '../lib/exportUtils.js'
 import { useAlerts } from '../state/alerts.js'
 import { useAuth } from '../components/AuthProvider.jsx'
- 
+/* import AdvancedModalChart from './device/AdvancedModalChart.jsx'
+import { useSeries as useSeriesHook, useHiResSeries, strideDownsample } from './device/hooks.js'
+ */
 function Series({ deviceId, metricKey, from, to, bucketMs, valueMin, valueMax }) {
   const [points, setPoints] = useState([])
   useEffect(() => {

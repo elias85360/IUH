@@ -45,7 +45,7 @@ export const useSettings = create(persist((set, get) => ({
     showBaseline: true,
     showForecast: false,
     yScale: 'linear', // 'linear' | 'log'
-    theme: 'dark', // 'dark' | 'light'
+    theme: 'light', // 'dark' | 'light' (default: light across all pages)
     lang: 'fr', // 'fr' | 'en'
   },
   setOptions(patch) { set((s)=>({ options: { ...s.options, ...patch } })) },

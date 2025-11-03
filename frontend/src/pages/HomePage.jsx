@@ -1,35 +1,30 @@
-import Breadcrumbs from '../components/Breadcrumbs.jsx'
 import StatCards from '../components/StatCards.jsx'
 import { useUiStore } from '../state/filters.js'
 import { useAssets } from '../state/assets.js'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { prefetchHome, prefetchDevices } from '../lib/prefetch.js'
-import PeriodTabs from '../components/PeriodTabs.jsx'
+
 import EnergyMixDonut from '../components/EnergyMixDonut.jsx'
 import ChangeUsageBars from '../components/ChangeUsageBars.jsx'
 import UsageEstimateArea from '../components/UsageEstimateArea.jsx'
 import ActiveDevicesBars from '../components/ActiveDevicesBars.jsx'
 import EnergyIntensityGauge from '../components/EnergyIntensityGauge.jsx'
-import CarbonFootprintCard from '../components/CarbonFootprintCard.jsx'
-import CalendarHeatmap from '../components/CalendarHeatmap.jsx'
-import ContributionWaterfall from '../components/ContributionWaterfall.jsx'
 import RoomContribution from '../components/RoomContribution.jsx'
-import HomeGridLayout from '../components/HomeGridLayout.jsx'
-import CorrelationMatrix from '../components/CorrelationMatrix.jsx'
 import HomeHealthAlerts from '../components/HomeHealthAlerts.jsx'
-import ComparePanel from '../components/ComparePanel.jsx'
-import HomeAnomalies from '../components/HomeAnomalies.jsx'
- 
+
+import { Doughnut } from 'react-chartjs-2'
+
 export default function HomePage({ devices }) {
-  const { period, anchorNow, selectedRoom, selectedTags, setFilters } = useUiStore()
-  const [showCompare, setShowCompare] = useState(false)
+  // Filtres globaux
+  const { period, selectedRoom, selectedTags, setFilters } = useUiStore()
   const { meta } = useAssets()
+
+  // Filtrage des devices visibles (garde ta logique)
   let visibleDevices = devices.filter(d => {
-    if (!selectedRoom || selectedRoom==='all') return true
+    if (!selectedRoom || selectedRoom === 'all') return true
     const m = meta[d.id] || {}
     return (m.room || d.room) === selectedRoom
   })
-  // Exclude devices marked as excluded in meta
   visibleDevices = visibleDevices.filter(d => !(meta[d.id]?.exclude))
   if (selectedTags && selectedTags.length) {
     visibleDevices = visibleDevices.filter(d => {
@@ -39,11 +34,12 @@ export default function HomePage({ devices }) {
     })
   }
   if (!visibleDevices.length) visibleDevices = devices.filter(d => !(meta[d.id]?.exclude))
+
+  // Prefetch
   useEffect(()=>{
     if (!devices || !devices.length) return
     try { prefetchHome(devices, { ms: period.ms }); prefetchDevices(devices, { ms: period.ms }) } catch {}
   }, [devices, period])
-  console.log('Visible devices:', visibleDevices)
 
   function clearRoom(){ setFilters({ selectedRoom: 'all' }) }
   function clearTag(tag){
@@ -51,50 +47,19 @@ export default function HomePage({ devices }) {
     setFilters({ selectedTags: next })
   }
 
-  const presets = {
-    operations: [
-      { i: 'active', x: 0, y: 0, w: 6, h: 7 },
-      { i: 'mix', x: 6, y: 0, w: 6, h: 7 },
-      { i: 'room', x: 0, y: 7, w: 12, h: 8 },
-      { i: 'change', x: 0, y: 15, w: 6, h: 7 },
-      { i: 'estimate', x: 6, y: 15, w: 6, h: 7 },
-      { i: 'anomalies', x: 0, y: 22, w: 6, h: 6 },
-      { i: 'health', x: 0, y: 22, w: 12, h: 6 },
-    ],
-    energy: [
-      { i: 'mix', x: 0, y: 0, w: 4, h: 7 },
-      { i: 'change', x: 4, y: 0, w: 4, h: 7 },
-      { i: 'estimate', x: 8, y: 0, w: 4, h: 7 },
-      { i: 'waterfall', x: 0, y: 7, w: 6, h: 7 },
-      { i: 'calendar', x: 6, y: 7, w: 6, h: 7 },
-      { i: 'corr', x: 0, y: 14, w: 4, h: 6 },
-      { i: 'intensity', x: 4, y: 14, w: 4, h: 6 },
-      { i: 'carbon', x: 8, y: 14, w: 4, h: 6 },
-      { i: 'room', x: 0, y: 20, w: 12, h: 8 },
-      { i: 'anomalies', x: 0, y: 28, w: 6, h: 6 },
-      { i: 'health', x: 0, y: 28, w: 12, h: 6 },
-    ]
-  }
-
-  function applyPreset(key){ try { localStorage.setItem('home-layout', JSON.stringify(presets[key])) } catch {}; window.location.reload() }
+  // Donut KPI (anneau) – simple visuel (OK vs Late); à brancher si tu veux une vraie métrique d’uptime
+  const kpiDonut = useMemo(()=>{
+    const ok = 80, late = 20
+    return {
+      labels: ['OK', 'Late'],
+      datasets: [{ data: [ok, late], backgroundColor: ['#22c55e','#e5e7eb'], borderWidth: 0, cutout: '70%' }]
+    }
+  },[])
 
   return (
     <>
-      <Breadcrumbs />
-      <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
-        <div className="badge">Energy Dashboard</div>
-        <div className="row" style={{gap:8, alignItems:'center'}}>
-          <button className="btn" onClick={()=>setShowCompare(v=>!v)}>{showCompare? 'Hide Compare':'Show Compare'}</button>
-          <button className="btn" onClick={()=>applyPreset('operations')}>Preset: Operations</button>
-          <button className="btn" onClick={()=>applyPreset('energy')}>Preset: Energy</button>
-          <button className="btn" onClick={()=>{ try{ localStorage.removeItem('home-layout') }catch{}; window.location.reload() }}>Reset Layout</button>
-          <PeriodTabs />
-        </div>
-      </div>
-      <StatCards devices={visibleDevices} />
-      {showCompare && <ComparePanel devices={visibleDevices} period={period} />}
-      {/* Active filter chips */}
-      <div className="row" style={{gap:8, margin:'8px 0'}}>
+      {/* Chips de filtres actifs */}
+      <div className="row" style={{gap:8, margin:'6px 0 14px'}}>
         {selectedRoom && selectedRoom!=='all' && (
           <span className="badge">Room: {selectedRoom} <button className="btn" onClick={clearRoom}>✕</button></span>
         )}
@@ -102,20 +67,108 @@ export default function HomePage({ devices }) {
           <span key={tag} className="badge">Tag: {tag} <button className="btn" onClick={()=>clearTag(tag)}>✕</button></span>
         ))}
       </div>
-      <HomeGridLayout components={{
-        mix: <EnergyMixDonut devices={visibleDevices} onSlice={(id, metric)=>{ window.location.href = `/devices/${encodeURIComponent(id)}?metric=${encodeURIComponent(metric||'P')}` }} />,
-        change: <ChangeUsageBars devices={visibleDevices} />,
-        estimate: <UsageEstimateArea devices={visibleDevices} />,
-        active: <ActiveDevicesBars devices={visibleDevices} onSelectDevice={(id, metric)=>{ window.location.href = `/devices/${encodeURIComponent(id)}?metric=${encodeURIComponent(metric||'P')}` }} />,
-        intensity: <EnergyIntensityGauge devices={visibleDevices} />,
-        carbon: <CarbonFootprintCard devices={visibleDevices} />,
-        calendar: <CalendarHeatmap devices={visibleDevices} />,
-        waterfall: <ContributionWaterfall devices={visibleDevices} />,
-        room: <RoomContribution devices={visibleDevices} onSelectRoom={(room)=> setFilters({ selectedRoom: room })} />,
-        corr: <CorrelationMatrix devices={visibleDevices} />,
-        health: <HomeHealthAlerts />,
-        anomalies: <HomeAnomalies devices={visibleDevices} />,
-      }} />
+
+      {/* Grille 3 colonnes (look maquette) */}
+      <div className="dashboard-v2">
+
+        {/* 1) Bar chart (gauche haut) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">Daily Usage</h3>
+          </div>
+          <div className="card-body">
+            <ChangeUsageBars devices={visibleDevices} />
+          </div>
+        </section>
+
+        {/* 2) KPIs (milieu haut) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">Summary</h3>
+          </div>
+          <div className="card-body">
+            <StatCards devices={visibleDevices} />
+          </div>
+        </section>
+
+        {/* 3) Anneaux KPI (droite haut) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">KPI Rings</h3>
+          </div>
+          <div className="card-body">
+            <div className="kpi-ring">
+              <div style={{width:140, height:140}}>
+                <Doughnut data={kpiDonut} options={{plugins:{legend:{display:false}}, animation:false, maintainAspectRatio:false}} />
+              </div>
+              <div>
+                <div className="v">80%</div>
+                <div className="s">Uptime</div>
+              </div>
+              <div style={{flex:1, minWidth:160}}>
+                <EnergyIntensityGauge devices={visibleDevices} />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 4) Grouped bars (2e ligne gauche) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">Active Devices</h3>
+          </div>
+          <div className="card-body">
+            <ActiveDevicesBars devices={visibleDevices} />
+          </div>
+        </section>
+
+        {/* 5) Area trend (2e ligne milieu) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">Estimate Trend</h3>
+          </div>
+          <div className="card-body">
+            <UsageEstimateArea devices={visibleDevices} />
+          </div>
+        </section>
+
+        {/* 6) Bar by room (2e ligne droite) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">Room Contribution</h3>
+          </div>
+          <div className="card-body">
+            <RoomContribution
+              devices={visibleDevices}
+              onSelectRoom={(room)=> setFilters({ selectedRoom: room })}
+            />
+          </div>
+        </section>
+
+        {/* 7) Donut (3e ligne gauche, col-span-2 pour ressembler à la tuile large) */}
+        <section className="card-v2 col-span-2">
+          <div className="card-head">
+            <h3 className="card-title">Energy Mix</h3>
+          </div>
+          <div className="card-body">
+            <EnergyMixDonut
+              devices={visibleDevices}
+              onSlice={(id, metric)=>{ window.location.href = `/devices/${encodeURIComponent(id)}?metric=${encodeURIComponent(metric||'P')}` }}
+            />
+          </div>
+        </section>
+
+        {/* 8) Health / Alerts (3e ligne droite) */}
+        <section className="card-v2">
+          <div className="card-head">
+            <h3 className="card-title">Data Health</h3>
+          </div>
+          <div className="card-body">
+            <HomeHealthAlerts />
+          </div>
+        </section>
+
+      </div>
     </>
   )
 }

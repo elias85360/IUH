@@ -5,7 +5,11 @@ import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider, AuthRefreshBootstrap } from './components/AuthProvider.jsx'
 import App from './App.jsx'
 
+// ✅ Styles globaux (thème clair)
+import './styles.css'
 
+// ✅ Setup Chart.js en mode clair (axes, grilles, tooltips)
+import './lib/chartjs-setup.js'
 
 const queryClient = new QueryClient()
 
@@ -21,4 +25,3 @@ createRoot(document.getElementById('root')).render(
     </QueryClientProvider>
   </React.StrictMode>
 )
- 

@@ -137,7 +137,8 @@ export default function App() {
         <TopProgress active={loading} />
         <div className="row" style={{justifyContent:'space-between', alignItems:'center', marginTop:12}}>
           <Breadcrumbs />
-          <div className="row" style={{gap:8}}>
+          <div className="row" style={{gap:12}}>
+            <input className="search-input" type="search" placeholder="Search" aria-label="Search" />
             <div className="badge">{new Date().toLocaleDateString()}</div>
             <LoginControls />
           </div>
