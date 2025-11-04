@@ -72,12 +72,9 @@ export default function DevicesPage({ devices }) {
     async function run(){
       try {
         const now = Date.now(); const from = now - period.ms
-        const qs = new URLSearchParams({ from:String(from), to:String(now), bucketMs:String(60*60*1000) })
-        const r = await fetch(api.getBaseUrl() + '/api/quality?' + qs.toString())
-        if (!r.ok) return
-        const p = await r.json()
+        const p = await api.quality({ from, to: now, bucketMs: 60*60*1000 })
         const m = {}
-        for (const it of (p.items||[])) {
+        for (const it of (p?.items||[])) {
           if (it.metricKey !== 'P') continue
           const id = it.deviceId; const age = it.freshnessMs
           if (id) m[id] = age

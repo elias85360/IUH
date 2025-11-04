@@ -78,8 +78,16 @@ function applyLightCardTheme() {
   ;['category','linear','time','timeseries'].forEach(applyScale)
 
   // Éléments
-  ChartJS.defaults.elements.line = { tension: .35, borderWidth: 2, fill: false }
-  ChartJS.defaults.elements.bar = { borderRadius: 6 }
+  ChartJS.defaults.elements.line = {
+    ...(ChartJS.defaults.elements.line || {}),
+    tension: 0.35,
+    borderWidth: 2,
+    fill: false,
+  }
+  ChartJS.defaults.elements.bar = {
+    ...(ChartJS.defaults.elements.bar || {}),
+    borderRadius: 6,
+  }
 
   // Plugins
   ChartJS.defaults.plugins.legend = {
@@ -92,6 +100,7 @@ function applyLightCardTheme() {
     color: '#0f172a', font: { weight: '700', size: 14 }
   }
   ChartJS.defaults.plugins.tooltip = {
+    ...ChartJS.defaults.plugins.tooltip,
     cornerRadius: 8,
     backgroundColor: '#0f172a',
     titleColor: '#fff',

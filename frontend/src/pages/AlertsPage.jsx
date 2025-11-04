@@ -1,54 +1,39 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useAlerts } from '../state/alerts.js'
 import { useAuth } from '../components/AuthProvider.jsx'
-import { api } from '../services/api.js'
-import { format } from 'date-fns'
 
 export default function AlertsPage() {
   const { user } = useAuth()
-  const { log, clear, ack, silence, acked, audit, closeGroup, routeSlack, routeWebhook, webhookUrl, slackChannel, setRouting } = useAlerts()
+  const { log, clear, ack, silence, acked, audit } = useAlerts()
   const [level, setLevel] = useState('')
   const [q, setQ] = useState('')
   const [windowMin, setWindowMin] = useState(60)
   const actor = user?.email || user?.preferred_username || user?.sub || 'user'
   const ackedSet = useMemo(()=> new Set(Array.isArray(acked)? acked : ([])), [acked])
-  // Sync routing with backend
-  useEffect(()=>{
-    (async()=>{
-      try {
-        const r = await fetch(api.getBaseUrl() + '/api/alerts/routing')
-        if (!r.ok) return
-        const conf = await r.json()
-        setRouting({
-          routeSlack: !!conf.routeSlack,
-          routeWebhook: !!conf.routeWebhook,
-          slackChannel: conf.slackChannel || '',
-          webhookUrl: conf.webhookUrl || ''
-        })
-      } catch {}
-    })()
-  }, [])
   const filtered = useMemo(()=>{
     const L = level
     const query = q.trim().toLowerCase()
+    const now = Date.now()
+    const windowValue = Number(windowMin)
+    const windowMs = windowValue > 0 ? windowValue * 60 * 1000 : null
     let arr = (log||[])
     if (L) arr = arr.filter(a => a.level === L)
     if (query) arr = arr.filter(a => (a.deviceId||'').toLowerCase().includes(query) || (a.metricKey||'').toLowerCase().includes(query))
-    return arr
-  }, [log, level, q])
-  const grouped = useMemo(()=>{
-    const now = Date.now(); const winMs = Math.max(1, windowMin) * 60 * 1000
-    const map = new Map()
-    for (const a of filtered) {
-      if (!a.ts) continue
-      if ((now - Number(a.ts)) > winMs) continue
-      const key = `${a.deviceId}::${a.metricKey}::${a.level}`
-      const g = map.get(key) || { ...a, count: 0, items: [] }
-      g.count += 1; g.items.push(a); g.latest = Math.max(g.latest||0, Number(a.ts))
-      map.set(key, g)
+    if (windowMs != null) {
+      arr = arr.filter(a => a.ts && (now - Number(a.ts)) <= windowMs)
     }
-    return Array.from(map.values()).sort((a,b)=> (b.latest||0) - (a.latest||0))
-  }, [filtered, windowMin])
+    return arr
+  }, [log, level, q, windowMin])
+  const summary = useMemo(() => {
+    const total = filtered.length
+    const unacked = filtered.reduce((acc, alert) => acc + (ackedSet.has(alert.id) ? 0 : 1), 0)
+    const latestTs = filtered[0]?.ts
+    return {
+      total,
+      unacked,
+      latest: latestTs ? new Date(latestTs).toLocaleString() : '—',
+    }
+  }, [filtered, ackedSet])
 
   return (
     <div className="panel">
@@ -68,6 +53,7 @@ export default function AlertsPage() {
               <option value={60}>1 h</option>
               <option value={360}>6 h</option>
               <option value={1440}>24 h</option>
+              <option value={0}>Tout</option>
             </select>
           </label>
           <button className="btn" onClick={()=>clear(actor)}>Clear</button>
@@ -89,49 +75,14 @@ export default function AlertsPage() {
           }}>Export JSON</button>
         </div> 
       </div>
-      {/* Routing toggles (UI only) */}
       <div className="panel" style={{marginTop:12}}>
-        <div className="panel-title">Routing</div>
-        <div className="row" style={{gap:8, flexWrap:'wrap'}}>
-          <label className="row" style={{gap:6}}>
-            <input type="checkbox" checked={!!routeSlack} onChange={async (e)=>{
-              const v = e.target.checked; setRouting({ routeSlack: v });
-              try { await fetch(api.getBaseUrl() + '/api/alerts/routing', { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ routeSlack: v }) }) } catch {}
-            }} /> Slack
-          </label>
-          <input className="input" placeholder="#channel" style={{width:200}} value={slackChannel||''} onChange={async (e)=>{
-            const v = e.target.value; setRouting({ slackChannel: v })
-            try { await fetch(api.getBaseUrl() + '/api/alerts/routing', { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ slackChannel: v }) }) } catch {}
-          }} />
-          <label className="row" style={{gap:6}}>
-            <input type="checkbox" checked={!!routeWebhook} onChange={async (e)=>{
-              const v = e.target.checked; setRouting({ routeWebhook: v })
-              try { await fetch(api.getBaseUrl() + '/api/alerts/routing', { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ routeWebhook: v }) }) } catch {}
-            }} /> Webhook
-          </label>
-          <input className="input" placeholder="https://webhook" style={{width:340}} value={webhookUrl||''} onChange={async (e)=>{
-            const v = e.target.value; setRouting({ webhookUrl: v })
-            try { await fetch(api.getBaseUrl() + '/api/alerts/routing', { method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({ webhookUrl: v }) }) } catch {}
-          }} />
-          <button className="btn" onClick={async()=>{
-            try { await fetch(api.getBaseUrl() + '/api/alerts/test', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ level:'warn', deviceId:'test', metricKey:'P', value:1 }) }) } catch {}
-          }}>Send test</button>
+        <div className="panel-title">Résumé</div>
+        <div className="row" style={{gap:12, flexWrap:'wrap'}}>
+          <div className="badge">Total: {summary.total}</div>
+          <div className="badge" style={{borderColor:'#f97316', color:'#f97316'}}>Non ack: {summary.unacked}</div>
+          <div className="badge">Dernière alerte: {summary.latest}</div>
+          {windowMin ? <div className="badge">Fenêtre: {windowMin} min</div> : <div className="badge">Fenêtre: tout</div>}
         </div>
-      </div>
-      <div className="panel" style={{marginTop:12}}>
-        <div className="panel-title">Grouped (deduped)</div>
-        {grouped.length === 0 && <div className="badge">No alerts in window</div>}
-        {grouped.map((g)=> (
-          <div key={`${g.deviceId}::${g.metricKey}::${g.level}`} className="row" style={{justifyContent:'space-between', borderBottom:'1px solid rgba(255,255,255,0.08)', padding:'6px 0'}}>
-            <div>{g.deviceId} • {g.metricKey} • <span className="badge" style={{borderColor: g.level==='crit'? '#ef4444':'#f59e0b', color: g.level==='crit'? '#ef4444':'#f59e0b'}}>{g.level}</span></div>
-            <div className="row" style={{gap:8}}>
-              <span className="badge">{g.count}</span>
-              <button className="btn" onClick={()=>silence(g.deviceId, g.metricKey, 60*60*1000, actor)}>Silence 1h</button>
-              <button className="btn" onClick={()=>{ closeGroup(g.deviceId, g.metricKey, actor) }}>Close group</button>
-              <button className="btn" onClick={()=>{ for (const a of g.items) ack(a.id, actor) }}>Acknowledge</button>
-            </div>
-          </div>
-        ))}
       </div>
       <div className="panel" style={{marginTop:12}}>
         <div className="panel-title">All</div>

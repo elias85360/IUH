@@ -3,7 +3,6 @@ import TopProgress from './components/TopProgress.jsx'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Breadcrumbs from './components/Breadcrumbs.jsx'
 import SideNav from './components/SideNav.jsx'
-import AlertsToast from './components/AlertsToast.jsx'
 import ShareLink from './components/ShareLink.jsx'
 import { RequireRole, AuthCallbackView, useAuth } from './components/AuthProvider.jsx'
 import { I18nProvider, useI18n } from './lib/i18n.jsx'
@@ -178,7 +177,6 @@ export default function App() {
           {!loaded && <Route path="*" element={<Navigate to="/" replace />} />}
           {loaded && <Route path="*" element={<Navigate to="/" replace />} />}
         </Routes>
-        <AlertsToast />
       </div>
     
     </I18nProvider>

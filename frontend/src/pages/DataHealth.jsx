@@ -30,12 +30,8 @@ export default function DataHealth() {
     let cancel=false
     async function run(){
       try {
-        const q = new URLSearchParams({ from:String(from), to:String(to), bucketMs:String(bucketMs), detail:'1' })
-        const r = await fetch(api.getBaseUrl() + '/api/quality?' + q.toString())
-        if (r.ok) {
-          const p = await r.json()
-          if (!cancel) setRows(p.items || [])
-        }
+        const payload = await api.quality({ from, to, bucketMs, detail: '1' })
+        if (!cancel && payload && Array.isArray(payload.items)) setRows(payload.items)
       } catch {}
     }
     run(); return ()=>{ cancel=true }

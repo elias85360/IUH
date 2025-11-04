@@ -70,10 +70,11 @@ export default function SideNav() {
   ]
 
   return (
-    <aside className={open ? 'sidenav-v2 open' : 'sidenav-v2'}>
-      {/* Header (bouton + marque) */}
-      <div className="header">
-        <button className="hamburger" onClick={()=>setOpen(o=>!o)} aria-label="Toggle menu">
+    <>
+      <aside className={open ? 'sidenav-v2 open' : 'sidenav-v2'}>
+        {/* Header (bouton + marque) */}
+        <div className="header">
+          <button className="hamburger" onClick={()=>setOpen(o=>!o)} aria-label="Toggle menu">
           <span/><span/><span/>
         </button>
         {open && <div className="brand">Fusion Smart</div>}
@@ -154,6 +155,14 @@ export default function SideNav() {
           </div>
         </div>
       )}
-    </aside>
+      </aside>
+      <button
+        type="button"
+        className={open ? 'sidenav-overlay show' : 'sidenav-overlay'}
+        onClick={()=>setOpen(false)}
+        aria-hidden={!open}
+        tabIndex={-1}
+      />
+    </>
   )
 }

@@ -1,4 +1,4 @@
-import { masterClient } from '../lib/masterClient.js'
+import { masterClient, apiRaw } from '../lib/masterClient.js'
 import { getAccessToken, refreshAccessToken } from './oidc.js'
 
 const EXPLICIT_BASE = import.meta.env.VITE_API_BASE
@@ -170,6 +170,76 @@ export function getBaseUrl() {
   return 'http://localhost:4000'
 }
 
+function buildQualityParams(params = {}) {
+  const q = new URLSearchParams()
+  if (params.from != null) q.set('from', String(params.from))
+  if (params.to != null) q.set('to', String(params.to))
+  if (params.bucketMs != null) q.set('bucketMs', String(params.bucketMs))
+  if (params.detail != null) q.set('detail', String(params.detail))
+  return q
+}
+
+async function qualityMaster(params = {}) {
+  const now = Date.now()
+  const from = params.from != null ? Number(params.from) : (now - 24 * 60 * 60 * 1000)
+  const to = params.to != null ? Number(params.to) : now
+  const bucketMs = params.bucketMs != null ? Number(params.bucketMs) : 60 * 60 * 1000
+  const detail = params.detail
+  const devices = await masterClient.devices()
+  const metrics = await masterClient.metrics()
+  const items = []
+  const expected = bucketMs > 0 ? Math.max(0, Math.floor((to - from) / bucketMs)) : 0
+  for (const device of devices) {
+    let raw = []
+    try {
+      const spanMs = to - from
+      const estPoints = bucketMs > 0 ? Math.ceil(spanMs / bucketMs) : 0
+      const length = params.length != null ? Number(params.length) : Math.max(500, estPoints * 4)
+      raw = await apiRaw({ devId: device.id, length })
+    } catch {
+      raw = []
+    }
+    const metricInfo = new Map()
+    for (const m of metrics) metricInfo.set(m.key, { buckets: new Set(), lastTs: null })
+    for (const row of raw) {
+      const ts = Number(row.ts)
+      if (!Number.isFinite(ts) || ts < from || ts > to) continue
+      const values = row.values || {}
+      for (const metric of metrics) {
+        const info = metricInfo.get(metric.key)
+        if (!info) continue
+        const val = Number(values[metric.key])
+        if (!Number.isFinite(val)) continue
+        info.lastTs = ts
+        if (bucketMs > 0) {
+          const bucket = Math.floor(ts / bucketMs) * bucketMs
+          info.buckets.add(bucket)
+        }
+      }
+    }
+    for (const metric of metrics) {
+      const info = metricInfo.get(metric.key) || { buckets: new Set(), lastTs: null }
+      const present = info.buckets.size
+      const lastTs = info.lastTs
+      const item = {
+        deviceId: device.id,
+        deviceName: device.name,
+        metricKey: metric.key,
+        unit: metric.unit,
+        lastTs,
+        freshnessMs: lastTs != null ? Math.max(0, now - lastTs) : null,
+        bucketsPresent: present,
+        bucketsExpected: expected,
+        completeness: expected > 0 ? present / expected : 1,
+        gaps: Math.max(0, expected - present),
+      }
+      if (detail === '1') item.presentBuckets = Array.from(info.buckets).sort((a, b) => a - b)
+      items.push(item)
+    }
+  }
+  return { from, to, bucketMs, items }
+}
+
 const MODE = (import.meta.env.VITE_DATA_SOURCE || '').toLowerCase()
 
 export const api = MODE === 'master' && masterClient.isEnabled
@@ -179,6 +249,7 @@ export const api = MODE === 'master' && masterClient.isEnabled
       async kpis(deviceId, from, to) { return masterClient.kpis({ deviceId, from, to }) },
       async timeseries(deviceId, metricKey, params={}) { return masterClient.series({ deviceId, metricKey, ...params }) },
       async diagnostics() { return masterClient.diagnostics() },
+      async quality(params={}) { return qualityMaster(params) },
       exportCsvUrl() { return '#' },
       async notify(alert) { return http('/api/notify', { method: 'POST', body: JSON.stringify(alert) }) },
     }
@@ -215,6 +286,11 @@ export const api = MODE === 'master' && masterClient.isEnabled
         if (from) q.set('from', String(from))
         if (to) q.set('to', String(to))
         return `${getBaseUrl()}/api/export.csv?${q.toString()}`
+      },
+      quality: async (params={}) => {
+        const q = buildQualityParams(params)
+        const path = `/api/quality${q.toString() ? `?${q.toString()}` : ''}`
+        return http(path)
       },
       async notify(alert) { return http('/api/notify', { method: 'POST', body: JSON.stringify(alert) }) },
     }

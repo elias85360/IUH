@@ -12,11 +12,9 @@ export default function HomeHealthAlerts() {
       try{
         const now = Date.now()
         const from = now - 24*60*60*1000
-        const q = new URLSearchParams({ from:String(from), to:String(now), bucketMs:String(60*60*1000) })
-        const r = await fetch(api.getBaseUrl() + '/api/quality?' + q.toString())
-        if (!cancel && r.ok) {
-          const p = await r.json()
-          setItems(p.items || [])
+        const res = await api.quality({ from, to: now, bucketMs: 60*60*1000 })
+        if (!cancel && res && Array.isArray(res.items)) {
+          setItems(res.items)
         }
       } catch {/* noop */}
       if (!cancel) setLoading(false)

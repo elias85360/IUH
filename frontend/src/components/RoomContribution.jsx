@@ -69,12 +69,11 @@ export default function RoomContribution({ devices = [], onSelectRoom }) {
   }), [])
 
   return (
-    <div style={{ position:'relative', height: 'var(--chart-h)', minHeight: 220 }}>
-      {/* Bouton chip % / absolu en haut-droite */}
+    <div className="tile-room-chart">
       <button
         className="chip"
-        onClick={() => setRelative(v => !v)}
-        style={{ position:'absolute', right:12, top:8, zIndex:1 }}
+        onClick={() => setRelative((v) => !v)}
+        style={{ position: 'absolute', right: 12, top: 8, zIndex: 2 }}
         title={relative ? 'Afficher en kWh (absolu)' : 'Afficher en % (relatif)'}
       >
         {relative ? 'Absolu' : '% Relatif'}
@@ -83,33 +82,38 @@ export default function RoomContribution({ devices = [], onSelectRoom }) {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={view}
-          layout="vertical"
-          margin={{ top: 10, right: 16, left: 100, bottom: 8 }}
-          onClick={(e) => {
-            const r = e?.activePayload?.[0]?.payload?.room
-            if (r && onSelectRoom) onSelectRoom(r)
-          }}
+          margin={{ top: 32, right: 24, left: 24, bottom: 24 }}
         >
-          <CartesianGrid stroke={GRID} />
+          <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis
-            type="number"
-            stroke={AXIS}
-            tickLine={false}
-            tickFormatter={(v) => relative ? `${v.toFixed(1)}%` : v.toFixed(1)}
-          />
-          <YAxis
-            type="category"
             dataKey="room"
             stroke={AXIS}
             tickLine={false}
-            width={120}
+            axisLine={{ stroke: AXIS }}
+          />
+          <YAxis
+            stroke={AXIS}
+            tickLine={false}
+            axisLine={{ stroke: AXIS }}
+            tickFormatter={(v) => relative ? `${v.toFixed(0)}%` : v.toFixed(1)}
           />
           <Tooltip
-            formatter={(v) => relative ? [v.toFixed(1), '%'] : [Number(v).toFixed(1), 'kWh']}
+            formatter={(v) => relative ? [Number(v).toFixed(1), '%'] : [Number(v).toFixed(1), 'kWh']}
+            labelFormatter={(label) => label}
             contentStyle={tooltipStyle}
-            cursor={{ fill: 'rgba(2,6,23,0.04)' }}
+            cursor={{ fill: 'rgba(37,99,235,0.08)' }}
           />
-          <Bar dataKey="kwh" fill={COLORS[0]} radius={[8, 8, 8, 8]} barSize={18} cursor={onSelectRoom ? 'pointer' : 'default'} />
+          <Bar
+            dataKey="kwh"
+            fill={COLORS[0]}
+            radius={[6, 6, 0, 0]}
+            barSize={32}
+            onClick={(entry) => {
+              const room = entry?.room ?? entry?.payload?.room
+              if (room && onSelectRoom) onSelectRoom(room)
+            }}
+            cursor={onSelectRoom ? 'pointer' : 'default'}
+          />
         </BarChart>
       </ResponsiveContainer>
 

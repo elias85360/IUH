@@ -8,12 +8,14 @@ export default function EnergyIntensityGauge({ devices }) {
   const from = anchorNow - period.ms
   const to = anchorNow
 
-  const [val, setVal] = useState(0)                      // kWh / device (fenêtre période)
+  const [val, setVal] = useState(0)
   const [stats, setStats] = useState({ min: 0, max: 0, avg: 0 })
+  const [loading, setLoading] = useState(true)
 
   useEffect(()=>{
     let cancel = false
     async function run(){
+      setLoading(true)
       const bucketMs = Math.max(60*60*1000, Math.floor((to - from) / 48))
       let kwh = 0
       const vals = []
@@ -33,6 +35,7 @@ export default function EnergyIntensityGauge({ devices }) {
       if (!cancel) {
         setVal(intensity)
         setStats({ min, max, avg })
+        setLoading(false)
       }
     }
     run()
@@ -52,16 +55,15 @@ export default function EnergyIntensityGauge({ devices }) {
   const TRACK = '#e5e7eb' // gris clair
 
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
-      {/* Jauge semi-circulaire */}
-      <div style={{ position:'relative', width:'var(--gauge-size)', height:'var(--gauge-size)' }}>
+    <div className="gauge-ring">
+      <div className="gauge-wrapper">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={data}
               dataKey="value"
-              innerRadius={50}
-              outerRadius={70}
+              innerRadius={60}
+              outerRadius={95}
               startAngle={180}
               endAngle={0}
               isAnimationActive={false}
@@ -71,29 +73,20 @@ export default function EnergyIntensityGauge({ devices }) {
             </Pie>
           </PieChart>
         </ResponsiveContainer>
-        {/* % au centre de la jauge */}
-        <div
-          style={{
-            position:'absolute', left:'50%', top:'58%',
-            transform:'translate(-50%, -50%)',
-            fontWeight:700, fontSize:14, color:'#0f172a'
-          }}
-          aria-hidden="true"
-        >
-          {Math.round(pct * 100)}%
+        <div className="gauge-value">
+          <div className="v">{loading ? '--%' : `${Math.round(pct * 100)}%`}</div>
+          <div className="s">Intensité</div>
         </div>
       </div>
-
-      {/* Valeur principale */}
-      <div style={{ fontSize:28, fontWeight:700 }}>
-        {val.toFixed(1)} <span style={{ fontSize:14 }}>kWh/device</span>
-      </div>
-
-      {/* Mini stats */}
-      <div className="kpi">
-        <div className="item">min <strong>{stats.min.toFixed(1)}</strong> kWh</div>
-        <div className="item">avg <strong>{stats.avg.toFixed(1)}</strong> kWh</div>
-        <div className="item">max <strong>{stats.max.toFixed(1)}</strong> kWh</div>
+      <div className="gauge-stats">
+        <div className="main">
+          {loading ? '--' : val.toFixed(1)} <span>kWh/device</span>
+        </div>
+        <div className="mini">
+          <div>min <strong>{loading ? '--' : stats.min.toFixed(1)}</strong> kWh</div>
+          <div>avg <strong>{loading ? '--' : stats.avg.toFixed(1)}</strong> kWh</div>
+          <div>max <strong>{loading ? '--' : stats.max.toFixed(1)}</strong> kWh</div>
+        </div>
       </div>
     </div>
   )
