@@ -9,15 +9,26 @@ let refreshTimer = null
 
 function randString(len = 64) {
   const arr = new Uint8Array(len)
-  crypto.getRandomValues(arr)
+  if  ( typeof crypto !== 'undefined' && crypto.getRandomValues ) {
+    crypto.getRandomValues(arr)
+  } else {
+    for (let i = 0; i < len; i++) {
+      arr[i] = Math.floor(Math.random() * 256)
+    }
+  }
   return Array.from(arr).map(b => ('0' + b.toString(16)).slice(-2)).join('')
 }
 
 async function sha256(str) {
   const enc = new TextEncoder()
   const data = enc.encode(str)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return new Uint8Array(digest)
+  //crypto.subtle only works in secure contexts (https ou localhost)
+  // Sur http://192.168.x.x il peut être undefined -> on desactive le PKCE et on revient à un flow classique
+  if ( typeof crypto !== ' undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function' ) {
+    const digest = await crypto.subtle.digest('SHA-256', data)
+    return new Uint8Array(digest)
+  }
+  return null
 }
 
 function b64url(bytes) {
@@ -114,15 +125,21 @@ export async function login({ redirectTo } = {}) {
   if (!ISSUER || !CLIENT_ID) throw new Error('OIDC not configured')
   const state = randString(16)
   const codeVerifier = randString(64)
-  const challenge = b64url(await sha256(codeVerifier))
+  let challenge = null
+  const hash = await sha256(codeVerifier)
+  if (hash) {
+    challenge = b64url(hash)
+  }
   const authUrl = new URL(ISSUER.replace(/\/$/,'') + '/protocol/openid-connect/auth')
   authUrl.searchParams.set('client_id', CLIENT_ID)
   authUrl.searchParams.set('response_type', 'code')
   authUrl.searchParams.set('scope', 'openid profile email')
   authUrl.searchParams.set('redirect_uri', REDIRECT_URI.replace(/\/$/, '') + '/auth/callback')
   authUrl.searchParams.set('state', state)
-  authUrl.searchParams.set('code_challenge', challenge)
-  authUrl.searchParams.set('code_challenge_method', 'S256')
+  if (challenge) {
+    authUrl.searchParams.set('code_challenge', challenge)
+    authUrl.searchParams.set('code_challenge_method', 'S256')
+  }
   try { sessionStorage.setItem('oidc.tmp', JSON.stringify({ state, codeVerifier, redirectTo: redirectTo || (typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/') })) } catch {}
   window.location.assign(authUrl.toString())
 }
@@ -139,7 +156,9 @@ export async function handleCallback(currentUrl) {
   body.set('code', code)
   body.set('client_id', CLIENT_ID)
   body.set('redirect_uri', REDIRECT_URI.replace(/\/$/, '') + '/auth/callback')
-  body.set('code_verifier', tmp.codeVerifier)
+  if (tmp.codeVerifier) {
+    body.set('code_verifier', tmp.codeVerifier)
+  }
   const res = await fetch(tokenUrl, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body })
   if (!res.ok) throw new Error('token exchange failed')
   const tokens = await res.json()
