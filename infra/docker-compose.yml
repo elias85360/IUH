@@ -172,16 +172,16 @@ services:
       dockerfile: infra/nginx.Dockerfile
       args:
         # Config OIDC injectée au build Vite pour la prod IUH
-        # Vite utilisera ces variables pour parler à Keycloak
         VITE_OIDC_ISSUER_URL: "http://192.168.2.30:8080/realms/iot"
         VITE_OIDC_CLIENT_ID: "iot-dashboard"
-        VITE_OIDC_REDIRECT_URI: "http://192.168.2.30"
+        # IMPORTANT : on met le frontend sur http://192.168.2.30:8081
+        VITE_OIDC_REDIRECT_URI: "http://192.168.2.30:8081"
         VITE_REQUIRE_AUTH: "1"
         # VITE_API_BASE: ""   # inutile derrière nginx
         # VITE_DATA_SOURCE: "" # on utilise l’API backend via nginx
     ports:
-      - "80:80"
-      - "443:443"
+      - "8081:80"
+      # - "443:443"  # désactivé pour l’instant
     environment:
       # Proxy vers Kienlab
       KIENLAB_PROXY_TARGET: "http://eprophet.kienlab.com"
