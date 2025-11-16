@@ -21,3 +21,7 @@ yarn-error.log*
 .DS_Store
 .vscode/
 .idea/
+
+/infra/.env
+/backend/.env
+/frontend/.env

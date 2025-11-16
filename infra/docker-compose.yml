@@ -4,80 +4,76 @@ services:
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD_FILE: /run/secrets/keycloak_db_password
-      #POSTGRES_PASSWORD: keycloak
-    secrets:
-      - keycloak_db_password
+      POSTGRES_PASSWORD: keycloak
     volumes:
       - keycloak_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U keycloak -d keycloak"]
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
       interval: 5s
       timeout: 3s
       retries: 10
+
   db:
     image: timescale/timescaledb:2.14.2-pg14
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_postgres_password
-      #POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: iot
-    secrets:
-      - db_postgres_password
-    ports: ["5432:5432"]
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 3s
-      retries: 10 
+      retries: 10
     networks:
       - default
-  redis: 
+
+  redis:
     image: redis:7.2-alpine
-    ports: ["6379:6379"]
+    ports:
+      - "6379:6379"
     networks:
       - default
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.2
-    command: ["start","--http-enabled=true","--import-realm"]
+    command: ["start", "--http-enabled=true", "--import-realm"]
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
-      KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
-      #KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_DB: postgres
       KC_DB_URL_HOST: keycloak-db
       KC_DB_URL_PORT: 5432
       KC_DB_URL_DATABASE: keycloak
       KC_DB_SCHEMA: public
       KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD_FILE: /run/secrets/keycloak_db_password
-      #KC_DB_PASSWORD: keycloak
-      # Public hostname (set to your VPS domain in prod)
-      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-localhost}
-      #KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-dashboard.mondomaine.com}
+      KC_DB_PASSWORD: keycloak
+      # Hostname public du serveur (prod = 192.168.2.30 en LAN IUH)
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-192.168.2.30}
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
       KC_HOSTNAME_STRICT: "false"
-    secrets:
-      - keycloak_admin_password
-      - keycloak_db_password
-    ports: ["8080:8080"]
+    ports:
+      - "8080:8080"
     volumes:
       - ./keycloak/realm-iot.json:/opt/keycloak/data/import/realm-iot.json:ro
-    depends_on: [keycloak-db]
+    depends_on:
+      - keycloak-db
     networks:
       - default
+
   api:
     build:
       context: ../backend
     environment:
       # Persistence / cache
-      DATABASE_URL_FILE: /run/secrets/db_connection_string
-      #DATABASE_URL: postgres://postgres:postgres@db:5432/iot
+      DATABASE_URL: postgres://postgres:postgres@db:5432/iot
       REDIS_URL: redis://redis:6379
       TSDB_MIRROR: "1"
       TSDB_READ: "0"
       PREAGG_RETENTION_DAYS: "90"
-      # Security
+
+      # Security / OIDC
       RBAC_ENFORCE: "1"
       ALLOW_API_KEY_WITH_RBAC: "1"
       OIDC_ISSUER_URL: http://keycloak:8080/realms/iot
@@ -87,147 +83,116 @@ services:
       OIDC_JWKS_URL: http://keycloak:8080/realms/iot/protocol/openid-connect/certs
       TRUST_PROXY: "true"
       RATE_LIMIT: 1000/1m
-      # CORS (serving SPA from same host via nginx; not strictly needed)
-      #CORS_ORIGIN: http://localhost
+
+      # CORS (SPA servie par nginx sur 192.168.2.30)
+      # CORS_ORIGIN: http://localhost
       CORS_ORIGIN: http://192.168.2.30
-      # Observability
+
+      # Observabilité
       LOG_LEVEL: info
-      # Ingestion: Kienlab via nginx proxy
+
+      # Ingestion: Kienlab via proxy nginx
       DATA_SOURCE: kienlab
-      # Using nginx as proxy to kienlab
       KIENLAB_BASE: "http://nginx/kienlab"
       KIENLAB_DEVICES: "F0:24:F9:57:59:18,3C:8A:1F:0B:7C:C4,D4:8A:FC:A5:ED:E0,3C:8A:1F:0B:70:D4,D4:8A:FC:99:66:68,3C:8A:1F:0B:6F:A8"
       KIENLAB_AUTH_SCHEME: ""
-      # No API key needed as we're using direct proxy
-      KIENLAB_API_KEY_FILE: /run/secrets/kienlab_api_key
-      #KIENLAB_API_KEY: ""
+      KIENLAB_API_KEY: ""
       KIENLAB_LENGTH: "1000"
       KIENLAB_POLL_MS: "5000"
       KIENLAB_MAX_INIT_ROWS: "500"
       KIENLAB_DEBUG: "1"
-      # Temporary test API key for local verification only. Remove for real deployments.
-      API_KEY_FILE: /run/secrets/api_key
-      #API_KEY: "testkey"
+
+      # Clé API de test (à supprimer ou remplacer pour la prod réelle)
+      API_KEY: "testkey"
 
       # --- Email alerts (SMTP) ---
-      # Fill with your SMTP provider credentials. Example below for Gmail
-      # (requires an app password and 2FA):
-
-
-      SMTP_HOST_FILE: /run/secrets/smtp_host
-      SMTP_PORT_FILE: /run/secrets/smtp_port
-      SMTP_SECURE_FILE: /run/secrets/smtp_secure
-      SMTP_USER_FILE: /run/secrets/smtp_user
-      SMTP_PASS_FILE: /run/secrets/smtp_pass
-
-      #SMTP_HOST: "smtp.gmail.com"
-      #SMTP_PORT: "465"
-      #SMTP_SECURE: "true"
-      #SMTP_USER: "elias.bertet7@gmail.com"
-      #SMTP_PASS: "uowychnaosogsuzy"
-
-      ALERTS_FROM: "elias.bertet7@gmail.com"
-      ALERTS_TO: "elias.bertet7@gmail.com"
-      #Minimum alert level to notify by email: warn | crit
+      # Renseigner ces valeurs via un .env serveur, ne pas commiter les secrets
+      SMTP_HOST: ${SMTP_HOST:-"smtp.gmail.com"}
+      SMTP_PORT: ${SMTP_PORT:-"465"}
+      SMTP_SECURE: ${SMTP_SECURE:-"true"}
+      SMTP_USER: ${SMTP_USER:-""}
+      SMTP_PASS: ${SMTP_PASS:-""}
+      ALERTS_FROM: ${ALERTS_FROM:-""}
+      ALERTS_TO: ${ALERTS_TO:-""}
       ALERTS_MIN_LEVEL: "crit"
-      # Cooldown between identical alerts to avoid spam (in seconds)
       ALERTS_COOLDOWN_SECONDS: "300"
-    secrets:
-      - db_connection_string
-      - kienlab_api_key
-      - api_key
-      - smtp_host
-      - smtp_port
-      - smtp_secure
-      - smtp_user
-      - smtp_pass
-
     volumes:
-      # Persist thresholds.json, assets-meta.json and audit logs across restarts
+      # Persist thresholds.json, assets-meta.json et logs d’audit
       - api_data:/app/backend/data
       - api_logs:/var/log/iot
-    ports: ["4001:4000"]
-    depends_on: [db, redis]
+    ports:
+      - "4001:4000"
+    depends_on:
+      - db
+      - redis
+      - keycloak
     healthcheck:
-      # Use /metrics (public) for health to avoid auth on /api/health
-      test: ["CMD-SHELL","node -e \"fetch('http://localhost:4000/metrics').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      # Healthcheck sur /metrics (pas d’auth)
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:4000/metrics').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - default
-    
+
   prometheus:
     image: prom/prometheus:v2.55.0
-    ports: ["9090:9090"]
+    ports:
+      - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    depends_on: [api]
+    depends_on:
+      - api
     networks:
       - default
 
   grafana:
     image: grafana/grafana:10.4.5
-    ports: ["3000:3000"]
+    ports:
+      - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    depends_on: [prometheus]
+    depends_on:
+      - prometheus
     networks:
       - default
     volumes:
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
-  #py-forecast:
-   # build:
-    #  context: ./py-forecast
-    #ports:
-     # - "8000:8000"
-    #restart: unless-stopped
-    #depends_on: [api]
-    #networks:
-     # - default
+
   nginx:
     build:
       context: ..
       dockerfile: infra/nginx.Dockerfile
       args:
-        # Inject Vite auth config at build time (no extra .env files)
-        #VITE_OIDC_ISSUER_URL: "http://localhost:8080/realms/iot"
+        # Config OIDC injectée au build Vite pour la prod IUH
+        # Vite utilisera ces variables pour parler à Keycloak
         VITE_OIDC_ISSUER_URL: "http://192.168.2.30:8080/realms/iot"
         VITE_OIDC_CLIENT_ID: "iot-dashboard"
         VITE_OIDC_REDIRECT_URI: "http://192.168.2.30"
-        #VITE_OIDC_REDIRECT_URI: "http://dashboard.mondomaine.com"
         VITE_REQUIRE_AUTH: "1"
-        # Optional explicit API base (normally not needed behind nginx)
-        # VITE_API_BASE: ""
-        # Leave data source empty to use backend API via nginx
-        # VITE_DATA_SOURCE: ""
-    ports: ["80:80", "443:443"]
+        # VITE_API_BASE: ""   # inutile derrière nginx
+        # VITE_DATA_SOURCE: "" # on utilise l’API backend via nginx
+    ports:
+      - "80:80"
+      - "443:443"
     environment:
-      # Pour le proxy Kienlab
+      # Proxy vers Kienlab
       KIENLAB_PROXY_TARGET: "http://eprophet.kienlab.com"
-    depends_on: [api]
+    depends_on:
+      - api
     volumes:
       - ./nginx/certs:/etc/nginx/certs:ro
     networks:
       - default
-  #mqtt-broker:
-  #  image: eclipse-mosquitto:2.0
-  #  ports:
-  #    - "1883:1883"
-  #    - "9001:9001"
-  #  volumes:
-  #    - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-  #    - mosquitto_data:/mosquitto/data
-  #    - mosquitto_log:/mosquitto/logs 
-  #  networks:
-  #    - default
 
 volumes:
-  #mosquitto_data: {}
-  #mosquitto_log: {}
   api_data: {}
   api_logs: {}
   keycloak_db_data: {}
@@ -235,28 +200,3 @@ volumes:
 networks:
   default:
     name: iot-net
-
-
-secrets:
-  db_postgres_password:
-    file: ./secrets/DB_POSTGRES_PASSWORD
-  keycloak_db_password:
-    file: ./secrets/KEYCLOAK_DB_PASSWORD
-  keycloak_admin_password:
-    file: ./secrets/KEYCLOAK_ADMIN_PASSWORD
-  api_key:
-    file: ./secrets/API_KEY
-  kienlab_api_key:
-    file: ./secrets/KIENLAB_API_KEY
-  smtp_host:
-    file: ./secrets/SMTP_HOST
-  smtp_port:
-    file: ./secrets/SMTP_PORT
-  smtp_secure:
-    file: ./secrets/SMTP_SECURE
-  smtp_user:
-    file: ./secrets/SMTP_USER
-  smtp_pass:
-    file: ./secrets/SMTP_PASS
-  db_connection_string:
-    file: ./secrets/DB_CONNECTION_STRING
