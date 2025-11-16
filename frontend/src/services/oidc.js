@@ -123,24 +123,46 @@ export function hasRole(role) {
 
 export async function login({ redirectTo } = {}) {
   if (!ISSUER || !CLIENT_ID) throw new Error('OIDC not configured')
+
   const state = randString(16)
   const codeVerifier = randString(64)
+
   let challenge = null
   const hash = await sha256(codeVerifier)
   if (hash) {
     challenge = b64url(hash)
   }
-  const authUrl = new URL(ISSUER.replace(/\/$/,'') + '/protocol/openid-connect/auth')
+
+  const authUrl = new URL(ISSUER.replace(/\/$/, '') + '/protocol/openid-connect/auth')
   authUrl.searchParams.set('client_id', CLIENT_ID)
   authUrl.searchParams.set('response_type', 'code')
   authUrl.searchParams.set('scope', 'openid profile email')
   authUrl.searchParams.set('redirect_uri', REDIRECT_URI.replace(/\/$/, '') + '/auth/callback')
   authUrl.searchParams.set('state', state)
+
+  // PKCE uniquement si on a réussi à calculer un challenge (crypto.subtle dispo)
   if (challenge) {
     authUrl.searchParams.set('code_challenge', challenge)
     authUrl.searchParams.set('code_challenge_method', 'S256')
   }
-  try { sessionStorage.setItem('oidc.tmp', JSON.stringify({ state, codeVerifier, redirectTo: redirectTo || (typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/') })) } catch {}
+
+  const target =
+    redirectTo ||
+    (typeof window !== 'undefined'
+      ? window.location.pathname + window.location.search
+      : '/')
+
+  // On ne stocke le codeVerifier que si PKCE est effectivement activé
+  const tmp = {
+    state,
+    codeVerifier: challenge ? codeVerifier : null,
+    redirectTo: target,
+  }
+
+  try {
+    sessionStorage.setItem('oidc.tmp', JSON.stringify(tmp))
+  } catch {}
+
   window.location.assign(authUrl.toString())
 }
 
