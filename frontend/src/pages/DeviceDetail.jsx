@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { use, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, BarChart, Bar, Brush, AreaChart, Area, ComposedChart } from 'recharts'
@@ -279,8 +279,10 @@ export default function DeviceDetail({ devices, metrics }) {
   const fmt = (ts) => format(new Date(ts),'HH:mm')
   const timeFmt = timeTickFormatter(from, to)
   const stat = {
-    U: computeStats(U), I: computeStats(I), P: computeStats(P), E: computeStats(Eser), F: computeStats(F), pf: computeStats(pf), temp: computeStats(temp), humid: computeStats(humid)
+    U: computeStats(U), I: computeStats(I), P: computeStats(P), E: computeStats(Eser), F: computeStats(F), 
+    pf: computeStats(pf), temp: computeStats(temp), humid: computeStats(humid)
   }
+  const hasUIData = (U && U.length > 0) || (I && I.length > 0)
   const [effTh, setEffTh] = useState(null)
   useEffect(()=>{ (async()=>{ try{ const r=await api.thresholdsEffective(id); setEffTh(r.thresholds||null) }catch{ setEffTh(null) } })() }, [id])
   useEffect(()=>{ if (modal.open && advancedView) { try { registerBaseCharts(); registerZoom() } catch {} } }, [modal.open, advancedView])
@@ -334,6 +336,7 @@ export default function DeviceDetail({ devices, metrics }) {
 
   // Baseline & anomalies (for P)
   const [baselineSeries, setBaselineSeries] = useState([])
+  const [baselineMap, setBaselineMap] = useState({U:[], I:[], F:[], pf:[], temp:[], humid:[]})
   const [anoms, setAnoms] = useState([])
   useEffect(()=>{
     let cancel=false
@@ -358,6 +361,62 @@ export default function DeviceDetail({ devices, metrics }) {
     }
     run(); return ()=>{ cancel=true }
   }, [id, anchorNow, period.ms, P, options.anomalyZ])
+
+    useEffect(() => {
+    let cancel = false
+
+    async function run() {
+      try {
+        // Si l’option baseline est désactivée, on nettoie et on sort
+        if (!options.showBaseline) {
+          if (!cancel) setBaselineMap({ U: [], I: [] })
+          return
+        }
+
+        const end = anchorNow
+        const start = anchorNow - 28 * 24 * 60 * 60 * 1000 // 4 semaines d’historique
+        const bucketMs = 60 * 60 * 1000 // 1 h
+
+        const [histU, histI] = await Promise.all([
+          api.timeseries(id, 'U', { from: start, to: end, bucketMs }),
+          api.timeseries(id, 'I', { from: start, to: end, bucketMs }),
+        ])
+
+        const pointsU = (histU.points || []).map(p => ({ ts: p.ts, value: Number(p.value) }))
+        const pointsI = (histI.points || []).map(p => ({ ts: p.ts, value: Number(p.value) }))
+
+        // Pas d’historique → pas de baseline, on ne casse pas l’UI
+        if (!pointsU.length && !pointsI.length) {
+          if (!cancel) setBaselineMap({ U: [], I: [] })
+          return
+        }
+
+        const gridU = pointsU.length ? baselineByDOWHour(pointsU) : null
+        const gridI = pointsI.length ? baselineByDOWHour(pointsI) : null
+
+        const U_bl = (U || []).map(p => {
+          const d = new Date(p.ts)
+          const b = gridU ? gridU[d.getDay()]?.[d.getHours()] : undefined
+          return { ts: p.ts, value: Number.isFinite(b) ? b : undefined }
+        }).filter(p => p.value !== undefined)
+
+        const I_bl = (I || []).map(p => {
+          const d = new Date(p.ts)
+          const b = gridI ? gridI[d.getDay()]?.[d.getHours()] : undefined
+          return { ts: p.ts, value: Number.isFinite(b) ? b : undefined }
+        }).filter(p => p.value !== undefined)
+
+        if (!cancel) setBaselineMap({ U: U_bl, I: I_bl })
+      } catch {
+        // En cas d’erreur (ex: Kienlab 404), on désactive juste la baseline
+        if (!cancel) setBaselineMap({ U: [], I: [] })
+      }
+    }
+
+    run()
+    return () => { cancel = true }
+  }, [id, anchorNow, period.ms, options.showBaseline, U, I])
+
 
   // Compute derivative and simple forecast for P series.  These
   // calculations are performed on the merged, smoothed series to
@@ -418,6 +477,7 @@ export default function DeviceDetail({ devices, metrics }) {
     return ()=>{ cancel=true }
   }, [id, from, to, options.bucketMs])
 
+
   // Viewport-aware export (from Brush)
   const [viewRange, setViewRange] = useState(null)
   const pData = useMemo(()=> merge(P), [P, options.smoothing, options.smoothingMode, options.smoothingWindow])
@@ -456,25 +516,156 @@ export default function DeviceDetail({ devices, metrics }) {
     }), [])
     return (
       <DetailTile
-        title={title}
-        colorClass="neutral"
-        subClassName="detail-kpi-sub"
-        subStyle={{ background: hexToRgba(baseColor, 0.12), color: '#0f172a' }}
-        onOpen={onClick}
+        title="Voltage & Current"
+        colorClass="blue"
+        onOpen={()=>setModal({ type:'UI', open:true })}
       >
-        <div className="detail-kpi-donut">
-          <div className="tile-donut detail">
-            <Doughnut data={donutData} options={donutOptions} />
-            <div className="tile-donut-value">
-              <div className="value">
-                {last == null ? '--' : last.toFixed(1)}
-                {unit && <span className="unit">{unit}</span>}
-              </div>
-              <div className="label">Dernière valeur</div>
+        <div className="tile-chart detail-chart">
+          {hasUIData ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={mergeTwo(U, I, 'U', 'I')}
+                syncId={`dev-${id}`}
+                onMouseMove={(e)=>{ const ts = e && e.activeLabel; if (ts) setHoverTs(ts) }}
+                onMouseLeave={()=>clearHover()}
+              >
+                <defs>
+                  <linearGradient id="gradU" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors.U} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={colors.U} stopOpacity={0.05} />
+                  </linearGradient>
+                  <linearGradient id="gradI" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors.I} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={colors.I} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke={T.grid} />
+                <XAxis dataKey="ts" tickFormatter={timeFmt} stroke={T.axis} tickCount={12} minTickGap={12} />
+                <YAxis
+                  yAxisId={0}
+                  stroke={T.axis}
+                  domain={yDomainFor('U', merge(U))}
+                  tickCount={8}
+                  allowDecimals
+                  tickFormatter={yTickFormatterFor('U')}
+                />
+                <YAxis
+                  yAxisId={1}
+                  orientation="right"
+                  stroke={T.axis}
+                  domain={yDomainFor('I', merge(I))}
+                  tickCount={8}
+                  allowDecimals
+                  tickFormatter={yTickFormatterFor('I')}
+                />
+                <Tooltip
+                  labelFormatter={(v)=>new Date(v).toLocaleString()}
+                  formatter={(val, name)=>{
+                    const v = Number(val)
+                    const tx = name==='U'? thresholds.U : thresholds.I
+                    if (!tx) return [v, name]
+                    const dir = tx.direction || 'above'
+                    let delta = ''
+                    if (dir==='above') {
+                      if (tx.crit!=null && v>=tx.crit) delta = ` (+${(v-tx.crit).toFixed(1)})`
+                      else if (tx.warn!=null && v>=tx.warn) delta = ` (+${(v-tx.warn).toFixed(1)})`
+                    } else {
+                      if (tx.crit!=null && v<=tx.crit) delta = ` (${(v-tx.crit).toFixed(1)})`
+                      else if (tx.warn!=null && v<=tx.warn) delta = ` (${(v-tx.warn).toFixed(1)})`
+                    }
+                    return [formatValue(name, v), `${name}${delta}`]
+                  }}
+                />
+                {(missingMap.U||[]).map((g,i)=> (
+                  <ReferenceArea key={'mu'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                ))}
+                {(missingMap.I||[]).map((g,i)=> (
+                  <ReferenceArea key={'mi'+i} x1={g.x1} x2={g.x2} strokeOpacity={0} fill="#ef4444" fillOpacity={0.06} />
+                ))}
+                {Number.isFinite(thresholds.U?.warn) && Number.isFinite(thresholds.U?.crit) && (
+                  <ReferenceArea
+                    yAxisId={0}
+                    y1={Math.min(thresholds.U.warn, thresholds.U.crit)}
+                    y2={Math.max(thresholds.U.warn, thresholds.U.crit)}
+                    strokeOpacity={0}
+                    fill="#f59e0b"
+                    fillOpacity={0.06}
+                  />
+                )}
+                {Number.isFinite(thresholds.U?.crit) && (
+                  <ReferenceArea
+                    yAxisId={0}
+                    y1={thresholds.U.crit}
+                    y2={(stat.U.max||thresholds.U.crit)}
+                    strokeOpacity={0}
+                    fill="#ef4444"
+                    fillOpacity={0.06}
+                  />
+                )}
+                {hoverTs && <ReferenceLine x={hoverTs} stroke={T.brush} strokeDasharray="3 3" />}
+                <ReferenceLine y={thresholds.U?.warn??null} stroke={T.series.warning} strokeDasharray="4 2" />
+                <ReferenceLine y={thresholds.U?.crit??null} stroke={T.series.danger} strokeDasharray="4 2" />
+                <Area
+                  type="monotone"
+                  yAxisId={0}
+                  dataKey="U"
+                  stroke={colors.U}
+                  fill="url(#gradU)"
+                  fillOpacity={1}
+                  dot={false}
+                  name="U"
+                />
+                <Area
+                  type="monotone"
+                  yAxisId={1}
+                  dataKey="I"
+                  stroke={colors.I}
+                  fill="url(#gradI)"
+                  fillOpacity={1}
+                  dot={false}
+                  name="I"
+                />
+                {options.showBaseline && baselineMap.U.length > 0 && (
+                  <Line
+                    type="monotone"
+                    yAxisId={0}
+                    data={baselineMap.U}
+                    dataKey="value"
+                    stroke={T.series.gray}
+                    dot={false}
+                    strokeDasharray="4 3"
+                  />
+                )}
+                {options.showBaseline && baselineMap.I.length > 0 && (
+                  <Line
+                    type="monotone"
+                    yAxisId={1}
+                    data={baselineMap.I}
+                    dataKey="value"
+                    stroke={T.series.gray}
+                    dot={false}
+                    strokeDasharray="4 3"
+                  />
+                )}
+                <Brush dataKey="ts" height={20} stroke={T.brush} travellerWidth={10} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="no-data-message">
+              Aucune donnée disponible sur la période pour la tension et le courant.
             </div>
-          </div>
+          )}
         </div>
+        <TileKpiRow
+          items={[
+            { label: 'U last', value: Number.isFinite(stat.U.last) ? `${stat.U.last.toFixed(2)} V` : '--' },
+            { label: 'I last', value: Number.isFinite(stat.I.last) ? `${stat.I.last.toFixed(2)} A` : '--' },
+            { label: 'U avg', value: Number.isFinite(stat.U.avg) ? `${stat.U.avg.toFixed(2)} V` : '--' },
+            { label: 'I avg', value: Number.isFinite(stat.I.avg) ? `${stat.I.avg.toFixed(2)} A` : '--' },
+          ]}
+        />
       </DetailTile>
+
     )
   }
 
