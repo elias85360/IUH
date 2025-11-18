@@ -1,21 +1,57 @@
 {
   "realm": "iot",
+  "displayName": "IoT Dashboard H2.3",
   "enabled": true,
+  "loginWithEmailAllowed": true,
+  "registrationAllowed": false,
+  "rememberMe": true,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+
   "roles": {
     "realm": [
-      { "name": "viewer" },
-      { "name": "analyst" },
-      { "name": "admin" }
+      {
+        "name": "viewer",
+        "description": "Visualisation seule des dashboards IoT",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "analyst",
+        "description": "Accès analytique avancé (filtres, exports, scénarios)",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "admin",
+        "description": "Administration complète du dashboard IoT",
+        "composite": false,
+        "clientRole": false
+      }
     ]
   },
+
   "clients": [
     {
       "clientId": "iot-dashboard",
+      "name": "IoT Dashboard H2.3",
       "protocol": "openid-connect",
       "publicClient": true,
+      "bearerOnly": false,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "access.token.lifespan": "1800",
+        "client.session.idle.timeout": "3600",
+        "client.session.max.lifespan": "7200",
+        "post.logout.redirect.uris": "+",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false"
+      },
       "redirectUris": [
         "http://localhost:4001/*",
         "http://localhost:8080/*",
@@ -27,17 +63,80 @@
         "http://192.168.2.30/*",
         "http://192.168.2.30/auth/callback",
 
+        "http://192.168.2.30:8081/*",
+        "http://192.168.2.30:8081/auth/callback",
+
         "http://115.78.237.118/",
-        "http://115.78.237.118/*"
+        "http://115.78.237.118/*",
+        "http://115.78.237.118:8081/*"
       ],
       "webOrigins": [
         "http://localhost:5174",
         "http://localhost",
-
         "http://192.168.2.30",
-
-        "http://115.78.237.118"
+        "http://192.168.2.30:8081",
+        "http://115.78.237.118",
+        "http://115.78.237.118:8081"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        }
       ]
+    }
+  ],
+
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": false,
+      "email": "admin@iot.local",
+      "credentials": [
+        { "type": "password", "value": "Admin123!", "temporary": false }
+      ],
+      "realmRoles": ["admin"]
+    },
+    {
+      "username": "analyst",
+      "enabled": true,
+      "emailVerified": false,
+      "email": "analyst@iot.local",
+      "credentials": [
+        { "type": "password", "value": "Analyst123!", "temporary": false }
+      ],
+      "realmRoles": ["analyst"]
+    },
+    {
+      "username": "student",
+      "enabled": true,
+      "emailVerified": false,
+      "email": "viewer@iot.local",
+      "credentials": [
+        { "type": "password", "value": "Student123!", "temporary": false }
+      ],
+      "realmRoles": ["viewer"]
     }
   ]
 }

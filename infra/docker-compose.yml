@@ -1,42 +1,67 @@
 services:
+  # -------------------------
+  # Base de données Keycloak
+  # -------------------------
   keycloak-db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
     volumes:
       - keycloak_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak} -d ${KEYCLOAK_DB_NAME:-keycloak}"]
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - default
 
+  # -------------------------
+  # Base de données IoT (Timescale/Postgres)
+  # -------------------------
   db:
     image: timescale/timescaledb:2.14.2-pg14
+    restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: iot
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-iot}
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-iot}"]
       interval: 5s
       timeout: 3s
       retries: 10
     networks:
       - default
 
+
+  # -------------------------
+  # Redis (cache + rate limiting)
+  # -------------------------
   redis:
     image: redis:7.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
       - default
 
+  # -------------------------
+  # Keycloak (auth OIDC)
+  # -------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.2
+    restart: unless-stopped
     command: ["start", "--http-enabled=true", "--import-realm"]
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
@@ -44,78 +69,87 @@ services:
       KC_DB: postgres
       KC_DB_URL_HOST: keycloak-db
       KC_DB_URL_PORT: 5432
-      KC_DB_URL_DATABASE: keycloak
+      KC_DB_URL_DATABASE: ${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
       KC_DB_SCHEMA: public
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak
-      # Hostname public du serveur (prod = 192.168.2.30 en LAN IUH)
       KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-192.168.2.30}
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
       KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
     ports:
       - "8080:8080"
     volumes:
       - ./keycloak/realm-iot.json:/opt/keycloak/data/import/realm-iot.json:ro
     depends_on:
-      - keycloak-db
+      keycloak-db:
+        condition: service_healthy
     networks:
       - default
 
+  # -------------------------
+  # Backend API IoT
+  # -------------------------
   api:
     build:
       context: ../backend
+    restart: unless-stopped
     environment:
+      # Runtime
+      NODE_ENV: production
+      PORT: 4000
+      TRUST_PROXY: "true"
+      LOG_LEVEL: ${API_LOG_LEVEL:-info}
+
       # Persistence / cache
-      DATABASE_URL: postgres://postgres:postgres@db:5432/iot
+      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-iot}
       REDIS_URL: redis://redis:6379
       TSDB_MIRROR: "1"
       TSDB_READ: "0"
       PREAGG_RETENTION_DAYS: "90"
 
-      # Security / OIDC
+      # Sécurité / OIDC / RBAC
       RBAC_ENFORCE: "1"
       ALLOW_API_KEY_WITH_RBAC: "1"
-      OIDC_ISSUER_URL: http://keycloak:8080/realms/iot
-      OIDC_CLIENT_ID: iot-dashboard
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL_INTERNAL:-http://keycloak:8080/realms/iot}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-iot-dashboard}
       OIDC_REQUIRE_AUD: "0"
       OIDC_IGNORE_ISSUER: "1"
-      OIDC_JWKS_URL: http://keycloak:8080/realms/iot/protocol/openid-connect/certs
-      TRUST_PROXY: "true"
-      RATE_LIMIT: 1000/1m
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL_INTERNAL:-http://keycloak:8080/realms/iot/protocol/openid-connect/certs}
+      RATE_LIMIT: ${API_RATE_LIMIT:-1000/1m}
 
-      # CORS (SPA servie par nginx sur 192.168.2.30)
-      # CORS_ORIGIN: http://localhost
-      CORS_ORIGIN: "http://192.168.2.30:8081,http://localhost:5174"
+      # CORS (SPA servie par nginx)
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.2.30:8081,http://localhost:5174}
 
-      # Observabilité
-      LOG_LEVEL: info
+      # Ingestion Kienlab via proxy nginx
+      DATA_SOURCE: ${DATA_SOURCE:-kienlab}
+      KIENLAB_BASE: ${KIENLAB_BASE:-http://nginx/kienlab}
+      KIENLAB_DEVICES: ${KIENLAB_DEVICES}
+      KIENLAB_AUTH_SCHEME: ${KIENLAB_AUTH_SCHEME:-}
+      KIENLAB_API_KEY: ${KIENLAB_API_KEY:-}
+      KIENLAB_LENGTH: ${KIENLAB_LENGTH:-1000}
+      KIENLAB_POLL_MS: ${KIENLAB_POLL_MS:-5000}
+      KIENLAB_MAX_INIT_ROWS: ${KIENLAB_MAX_INIT_ROWS:-500}
+      KIENLAB_DEBUG: ${KIENLAB_DEBUG:-0}
 
-      # Ingestion: Kienlab via proxy nginx
-      DATA_SOURCE: kienlab
-      KIENLAB_BASE: "http://nginx/kienlab"
-      KIENLAB_DEVICES: "F0:24:F9:57:59:18,3C:8A:1F:0B:7C:C4,D4:8A:FC:A5:ED:E0,3C:8A:1F:0B:70:D4,D4:8A:FC:99:66:68,3C:8A:1F:0B:6F:A8"
-      KIENLAB_AUTH_SCHEME: ""
-      KIENLAB_API_KEY: ""
-      KIENLAB_LENGTH: "1000"
-      KIENLAB_POLL_MS: "5000"
-      KIENLAB_MAX_INIT_ROWS: "500"
-      KIENLAB_DEBUG: "1"
+      # API key technique (à changer en prod réelle)
+      API_KEY: ${API_KEY:-testkey}
 
-      # Clé API de test (à supprimer ou remplacer pour la prod réelle)
-      API_KEY: "testkey"
+      # Email alerts (SMTP)
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      ALERTS_FROM: ${ALERTS_FROM}
+      ALERTS_TO: ${ALERTS_TO}
+      ALERTS_MIN_LEVEL: ${ALERTS_MIN_LEVEL:-crit}
+      ALERTS_COOLDOWN_SECONDS: ${ALERTS_COOLDOWN_SECONDS:-300}
 
-      # --- Email alerts (SMTP) ---
-      # Renseigner ces valeurs via un .env serveur, ne pas commiter les secrets
-      SMTP_HOST: ${SMTP_HOST:-"smtp.gmail.com"}
-      SMTP_PORT: ${SMTP_PORT:-"465"}
-      SMTP_SECURE: ${SMTP_SECURE:-"true"}
-      SMTP_USER: ${SMTP_USER:-""}
-      SMTP_PASS: ${SMTP_PASS:-""}
-      ALERTS_FROM: ${ALERTS_FROM:-""}
-      ALERTS_TO: ${ALERTS_TO:-""}
-      ALERTS_MIN_LEVEL: "crit"
-      ALERTS_COOLDOWN_SECONDS: "300"
+      # Protection /metrics optionnelle
+      METRICS_API_KEY: ${METRICS_API_KEY:-}
+
     volumes:
       # Persist thresholds.json, assets-meta.json et logs d’audit
       - api_data:/app/backend/data
@@ -123,9 +157,12 @@ services:
     ports:
       - "4001:4000"
     depends_on:
-      - db
-      - redis
-      - keycloak
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      keycloak:
+        condition: service_started
     healthcheck:
       # Healthcheck sur /metrics (pas d’auth)
       test:
@@ -139,56 +176,66 @@ services:
     networks:
       - default
 
+  # -------------------------
+  # Prometheus (scrape /metrics API)
+  # -------------------------
   prometheus:
     image: prom/prometheus:v2.55.0
-    profiles: ["observability"]
+    restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
-      - api
+      api:
+        condition: service_started
     networks:
       - default
 
+  # -------------------------
+  # Grafana (dashboards observabilité)
+  # -------------------------
   grafana:
     image: grafana/grafana:10.4.5
-    profiles: ["observability"]
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     depends_on:
-      - prometheus
-    networks:
-      - default
+      prometheus:
+        condition: service_started
     volumes:
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
-
+    networks:
+      - default
+  # -------------------------
+  # Nginx (frontend + reverse proxy API / WS / Kienlab)
+  # -------------------------      
   nginx:
     build:
       context: ..
       dockerfile: infra/nginx.Dockerfile
       args:
-        # Config OIDC injectée au build Vite pour la prod IUH
-        VITE_OIDC_ISSUER_URL: "http://192.168.2.30:8080/realms/iot"
-        VITE_OIDC_CLIENT_ID: "iot-dashboard"
-        # IMPORTANT : on met le frontend sur http://192.168.2.30:8081
-        VITE_OIDC_REDIRECT_URI: "http://192.168.2.30:8081"
-        VITE_REQUIRE_AUTH: "1"
-        # VITE_API_BASE: ""   # inutile derrière nginx
-        # VITE_DATA_SOURCE: "" # on utilise l’API backend via nginx
+        # Config OIDC injectée dans le build Vite
+        VITE_OIDC_ISSUER_URL: ${VITE_OIDC_ISSUER_URL:-http://192.168.2.30:8080/realms/iot}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-iot-dashboard}
+        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-http://192.168.2.30:8081}
+        VITE_REQUIRE_AUTH: ${VITE_REQUIRE_AUTH:-1}
+    restart: unless-stopped
+
     ports:
       - "8081:80"
-      # - "443:443"  # désactivé pour l’instant
+      # - "443:443"  # à activer avec TLS plus tard
     environment:
       # Proxy vers Kienlab
-      KIENLAB_PROXY_TARGET: "http://eprophet.kienlab.com"
+      KIENLAB_PROXY_TARGET: ${KIENLAB_PROXY_TARGET:-http://eprophet.kienlab.com}
     depends_on:
-      - api
+      api:
+        condition: service_started
     volumes:
       - ./nginx/certs:/etc/nginx/certs:ro
     networks:
