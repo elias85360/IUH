@@ -60,9 +60,33 @@ function rateLimitKey(req) {
 
 function applySecurity(app) {
   app.disable("x-powered-by");
+
+  // Baseline Helmet pour l’API (CSP gérée côté frontend/Nginx)
   app.use(helmet({
+    contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
   }));
+
+  // Referrer-Policy durcie par défaut, overridable via REFERRER_POLICY
+  const refPolicy = process.env.REFERRER_POLICY || 'no-referrer';
+  try {
+    app.use(helmet.referrerPolicy({ policy: refPolicy }));
+  } catch {}
+
+  // HSTS optionnel (activer en prod derrière HTTPS)
+  // HSTS_ENABLED=1, HSTS_MAX_AGE_SECONDS=15552000 (180j) par défaut
+  const hstsEnabled = String(process.env.HSTS_ENABLED || '').toLowerCase() === '1';
+  if (hstsEnabled) {
+    const maxAgeSeconds = Number(process.env.HSTS_MAX_AGE_SECONDS || 15552000);
+    try {
+      app.use(helmet.hsts({
+        maxAge: Math.max(0, maxAgeSeconds),
+        includeSubDomains: true,
+        preload: false,
+      }));
+    } catch {}
+  }
+
   const { max, windowMs } = parseRateLimit(process.env.RATE_LIMIT);
   const limiter = rateLimit({
     windowMs,
@@ -70,22 +94,26 @@ function applySecurity(app) {
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: rateLimitKey,
-    // Do not rate-limit high-volume, idempotent GETs used by charts
+    // Ne pas limiter les gros GET de graphes
     skip: (req) => {
       try {
-        if ((req.method || 'GET').toUpperCase() !== 'GET') return false
-        const orig = String(req.originalUrl || '')
-        const path = String(req.path || '')
-        const isChart = orig.startsWith('/api/timeseries') || orig.startsWith('/api/kpis') ||
-                        orig.startsWith('/api/devices') || orig.startsWith('/api/metrics') ||
-                        path.startsWith('/timeseries') || path.startsWith('/kpis') ||
-                        path.startsWith('/devices') || path.startsWith('/metrics')
-        return isChart
-      } catch { return false }
-    }
+        if ((req.method || 'GET').toUpperCase() !== 'GET') return false;
+        const orig = String(req.originalUrl || '');
+        const path = String(req.path || '');
+        const isChart =
+          orig.startsWith('/api/timeseries') || orig.startsWith('/api/kpis') ||
+          orig.startsWith('/api/devices') || orig.startsWith('/api/metrics') ||
+          path.startsWith('/timeseries') || path.startsWith('/kpis') ||
+          path.startsWith('/devices') || path.startsWith('/metrics');
+        return isChart;
+      } catch {
+        return false;
+      }
+    },
   });
   app.use("/api", limiter);
 }
+
 
 // -------- HMAC anti-replay (optional) --------
 function getHmacSecret(keyId) {

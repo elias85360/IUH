@@ -24,6 +24,10 @@ function buildApi({ app, store, mailer }) {
     res.json({ ok: true, diagnostics: store.diagnostics() });
   });
 
+  router.get("/healthz", (req, res) => {
+    res.json({ ok: true, diagnostics: store.diagnostics() });
+  });
+
   // ------- Assets meta (RBAC: viewer read, analyst/admin write) -------
   router.get('/assets/meta', requireRole('viewer', RBAC_ENFORCE), (_req, res) => {
     res.json({ meta: getAssetsMeta() })

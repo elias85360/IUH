@@ -13,6 +13,7 @@ const { startIngestion } = require('./sources')
 const { applySecurity } = require('./security')
 const { createMailerFromEnv, createRoutersFromEnv } = require('./notify')
 const { initMetrics } = require('./metrics')
+const { validateEnv } = require('./envValidation')
 
 // Fillet de sécurité globale sur le process Node.js
 process.on('unhandledRejection', (err) => {
@@ -26,6 +27,8 @@ process.on('uncaughtException', (err) => {
     console.error('[uncaughtException]', err);
   } catch {}
 });
+
+validateEnv({ strict: process.env.NODE_ENV === 'production' })
 
 function main() { 
   const app = express()
