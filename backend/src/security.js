@@ -61,31 +61,25 @@ function rateLimitKey(req) {
 function applySecurity(app) {
   app.disable("x-powered-by");
 
-  // Baseline Helmet pour l’API (CSP gérée côté frontend/Nginx)
+  // Request ID injecté très tôt dans la chaîne
+  app.use((req, res, next) => {
+    let id = req.headers['x-request-id'];
+    if (typeof id !== 'string' || !id.trim()) {
+      try {
+        id = crypto.randomBytes(8).toString('hex');
+      } catch {
+        id = String(Date.now());
+      }
+    }
+    req.id = id;
+    req.requestId = id;
+    res.setHeader('x-request-id', id);
+    next();
+  });
+
   app.use(helmet({
-    contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
   }));
-
-  // Referrer-Policy durcie par défaut, overridable via REFERRER_POLICY
-  const refPolicy = process.env.REFERRER_POLICY || 'no-referrer';
-  try {
-    app.use(helmet.referrerPolicy({ policy: refPolicy }));
-  } catch {}
-
-  // HSTS optionnel (activer en prod derrière HTTPS)
-  // HSTS_ENABLED=1, HSTS_MAX_AGE_SECONDS=15552000 (180j) par défaut
-  const hstsEnabled = String(process.env.HSTS_ENABLED || '').toLowerCase() === '1';
-  if (hstsEnabled) {
-    const maxAgeSeconds = Number(process.env.HSTS_MAX_AGE_SECONDS || 15552000);
-    try {
-      app.use(helmet.hsts({
-        maxAge: Math.max(0, maxAgeSeconds),
-        includeSubDomains: true,
-        preload: false,
-      }));
-    } catch {}
-  }
 
   const { max, windowMs } = parseRateLimit(process.env.RATE_LIMIT);
   const limiter = rateLimit({
@@ -94,25 +88,23 @@ function applySecurity(app) {
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: rateLimitKey,
-    // Ne pas limiter les gros GET de graphes
+    // Do not rate-limit high-volume, idempotent GETs used by charts
     skip: (req) => {
       try {
-        if ((req.method || 'GET').toUpperCase() !== 'GET') return false;
-        const orig = String(req.originalUrl || '');
-        const path = String(req.path || '');
-        const isChart =
-          orig.startsWith('/api/timeseries') || orig.startsWith('/api/kpis') ||
-          orig.startsWith('/api/devices') || orig.startsWith('/api/metrics') ||
-          path.startsWith('/timeseries') || path.startsWith('/kpis') ||
-          path.startsWith('/devices') || path.startsWith('/metrics');
-        return isChart;
-      } catch {
-        return false;
-      }
-    },
+        if ((req.method || 'GET').toUpperCase() !== 'GET') return false
+        const orig = String(req.originalUrl || '')
+        const path = String(req.path || '')
+        const isChart = orig.startsWith('/api/timeseries') || orig.startsWith('/api/kpis') ||
+                        orig.startsWith('/api/devices') || orig.startsWith('/api/metrics') ||
+                        path.startsWith('/timeseries') || path.startsWith('/kpis') ||
+                        path.startsWith('/devices') || path.startsWith('/metrics')
+        return isChart
+      } catch { return false }
+    }
   });
   app.use("/api", limiter);
 }
+
 
 
 // -------- HMAC anti-replay (optional) --------
@@ -200,26 +192,71 @@ function hmacMiddleware(enforce = false) {
   };
 }
 
+// -------- Small, privacy-friendly preview of request body --------
+function buildBodyPreview(body) {
+  if (!body || typeof body !== 'object') return null;
+  const SENSITIVE = ['password', 'pass', 'secret', 'token', 'authorization', 'apikey', 'api_key'];
+  const preview = Array.isArray(body) ? [] : {};
+  const entries = Object.entries(body).slice(0, 20); // on limite la taille
+
+  for (const [key, value] of entries) {
+    const lower = String(key).toLowerCase();
+    if (SENSITIVE.includes(lower)) {
+      preview[key] = '***';
+      continue;
+    }
+    if (value === null || typeof value === 'undefined') {
+      preview[key] = value;
+    } else if (typeof value === 'string') {
+      preview[key] = value.length > 200 ? value.slice(0, 200) + '…' : value;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      preview[key] = value;
+    } else if (Array.isArray(value)) {
+      preview[key] = `[array len=${value.length}]`;
+    } else if (typeof value === 'object') {
+      preview[key] = '[object]';
+    } else {
+      preview[key] = String(value);
+    }
+  }
+  return preview;
+}
+
 // -------- Audit logging (basic, append-only) --------
 function recordAudit(action) {
   const file = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), 'audit.log');
   return (req, _res, next) => {
     const entry = {
       ts: new Date().toISOString(),
+      requestId: req.id || req.requestId || null,
       ip: req.ip,
       method: req.method,
       path: req.originalUrl,
       action,
       keyId: req.headers['x-api-key-id'] || null,
       auth: req.headers['authorization'] ? 'present' : 'absent',
+      user: req.user
+        ? {
+            sub: req.user.sub || null,
+            roles: Array.isArray(req.user.roles) ? req.user.roles : null,
+          }
+        : null,
       query: req.query || {},
+      bodyPreview: buildBodyPreview(req.body),
     };
-    try { fs.appendFile(file, JSON.stringify(entry) + '\n', () => {}); } catch {}
+
+    try {
+      fs.appendFile(file, JSON.stringify(entry) + '\n', () => {});
+    } catch {
+      // on ne bloque jamais la requête sur un problème d’audit
+    }
+
     next();
   };
 }
 
-module.exports = { applySecurity, apiKeyMiddleware, hmacMiddleware, recordAudit };
+
+module.exports = { applySecurity, apiKeyMiddleware, hmacMiddleware, recordAudit, buildBodyPreview };
 // ================= OIDC + RBAC (optional) =================
 
 function b64urlToBuf(s) {
@@ -348,16 +385,19 @@ function extractRoles(payload, clientId) {
 function requireAuth(enforce = false) {
   return async (req, res, next) => {
     if (!enforce) return next();
+
     const allowApiKey = String(process.env.ALLOW_API_KEY_WITH_RBAC || '1') === '1';
     const auth = String(req.headers['authorization'] || '');
-    const m = auth.match(/Bearer\s+(.+)/i);
-    const token = m ? m[1] : '';
+    const bearerMatch = auth.match(/Bearer\s+(.+)/i);
+    const token = bearerMatch ? bearerMatch[1] : '';
     const issuer = process.env.OIDC_ISSUER_URL;
     const clientId = process.env.OIDC_CLIENT_ID;
     const requireAud = String(process.env.OIDC_REQUIRE_AUD || '0') === '1';
     const audience = requireAud ? clientId : undefined;
+
+    // 1) Tentative OIDC / JWT si possible
     try {
-      if (token && issuer) {
+      if (token && issuer && isLikelyJwt(token)) {
         const payload = await verifyJwt(token, { issuer, audience });
         req.user = {
           sub: payload.sub,
@@ -367,17 +407,25 @@ function requireAuth(enforce = false) {
         return next();
       }
     } catch (e) {
-      // fallthrough to API key if allowed
+      // fallthrough to API key si autorisé
     }
-    if (allowApiKey && process.env.API_KEY && auth && auth.endsWith(process.env.API_KEY)) {
-      // Treat API key holders as admin by default, or env override
-      const role = process.env.API_KEY_ROLE || 'admin';
-      req.user = { sub: 'api-key', roles: [role] };
-      return next();
+
+    // 2) Fallback éventuel vers API key (pour intégrations techniques)
+    if (allowApiKey && process.env.API_KEY && auth) {
+      const m2 = auth.match(/Bearer\s+(.+)/i);
+      const provided = m2 ? m2[1] : auth.trim();
+      if (provided === process.env.API_KEY) {
+        const role = process.env.API_KEY_ROLE || 'admin';
+        req.user = { sub: 'api-key', roles: [role] };
+        return next();
+      }
     }
+
+    // 3) Sinon, refus d’accès
     return res.status(401).json({ error: 'unauthorized' });
   };
 }
+
 
 function requireRole(role, enforce = false) {
   return async (req, res, next) => {
