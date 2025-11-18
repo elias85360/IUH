@@ -1,5 +1,5 @@
 const { Server } = require("socket.io");
-const { incSocketConnections, decSocketConnections, recordAlert } = require('../src/metrics')
+const { incSocketConnections, decSocketConnections, recordAlert } = require('./metrics')
 
 const VOLATILE_POINTS = String(process.env.SOCKET_VOLATILE_POINTS || '1') === '1'
 const POINT_MIN_INTERVAL_MS = Math.max(0, Number(process.env.SOCKET_POINT_MIN_INTERVAL_MS || 100))

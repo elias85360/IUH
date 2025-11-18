@@ -14,6 +14,19 @@ const { applySecurity } = require('./security')
 const { createMailerFromEnv, createRoutersFromEnv } = require('./notify')
 const { initMetrics } = require('./metrics')
 
+// Fillet de sécurité globale sur le process Node.js
+process.on('unhandledRejection', (err) => {
+  try {
+    console.error('[unhandledRejection]', err);
+  } catch {}
+});
+
+process.on('uncaughtException', (err) => {
+  try {
+    console.error('[uncaughtException]', err);
+  } catch {}
+});
+
 function main() { 
   const app = express()
 
@@ -65,6 +78,29 @@ function main() {
   const routers = createRoutersFromEnv()
   app.set('alertRouters', routers)
   buildApi({ app, store, mailer })
+
+  app.use((req, res, next, err) => {
+    try {
+      console.error('[http:error]', {
+        method: req.method,
+        path: req.originalUrl,
+        message: err && err.message ? err.message : String(err),
+      })
+    } catch {}
+
+    if (res.headersSent) return next(err)
+
+    const status = 
+      err && Number.isInteger(err.status)
+        ? err.statusCode
+        : 500
+    const payload = { error: 'internal_error' }
+    if (process.env.NODE_ENV !== 'production') {
+      payload.details = String(err && err.message ? err.message : err)
+    }
+
+    res.status(status).json(payload)
+  })
 
   // Start ingestion (mock/http/ws/mqtt) and optional emailer
   const gen = startIngestion({ store, config })
