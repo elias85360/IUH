@@ -9,4 +9,3 @@ function startMock({ store, config }) {
 } 
 
 module.exports = { startMock }
-

@@ -23,6 +23,28 @@ import { useDataCache } from './state/dataCache.js'
 import { useAlerts } from './state/alerts.js'
 import { isAuthenticated, startAutoRefresh } from './services/oidc.js'
  
+
+function mapLoadError(e) {
+  if (!e) return 'Erreur inconnue lors du chargement des données.'
+  const msg = String(e.message || e)
+  const statusMatch = msg.match(/^HTTP\s+(\d+)/)
+  const status = (e && e.status) || (statusMatch ? Number(statusMatch[1]) : undefined)
+
+  if (status === 401 || e.code === 'unauthorized') {
+    return 'Session expirée ou non valide. Merci de vous reconnecter.'
+  }
+  if (status === 403 || e.code === 'forbidden') {
+    return 'Accès refusé : votre compte ne dispose pas des droits suffisants.'
+  }
+  if (msg.includes('No backend reachable')) {
+    return 'Backend indisponible. Vérifiez que l’API est démarrée et joignable.'
+  }
+  if (status === 500) {
+    return 'Erreur interne du serveur (500) lors du chargement des données.'
+  }
+  return msg
+}
+
 function LoginControls() {
   const { isAuthenticated, user, login, logout, hasRole } = useAuth()
   const { lang, setLang } = useI18n()
@@ -85,7 +107,7 @@ export default function App() {
       console.log('Metrics:', mRes.metrics)
       // Prefetch is handled by each page; avoid double prefetch here
       setLoaded(true)
-    } catch (e) { setError(String(e.message||e)) }
+    } catch (e) { setError(mapLoadError(e)) }
     finally { setLoading(false) }
   }
   useEffect(() => {

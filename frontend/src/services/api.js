@@ -74,7 +74,7 @@ async function tryFetch(base, path, params) {
   const extraHmac = await hmacHeaders(method, canon, bodyText)
   const token = getAccessToken()
   let attempt = 0
-  console.log('Fetching:', url)
+  if (!IS_PROD) console.log('Fetching:', url)
   while (true) {
     await acquire()
     let res
@@ -117,10 +117,18 @@ async function tryFetch(base, path, params) {
     }
     if (!res.ok) {
       release()
-      const text = await res.text().catch(()=> '')
-      throw new Error(`HTTP ${res.status}: ${text}`)
+      const bodyText = await res.text().catch(()=> '')
+      const err = new Error(`HTTP ${res.status}: ${bodyText}`)
+      err.status = res.status
+      err.body = bodyText
+      err.isApiError = true
+      if (res.status === 401) err.code = 'unauthorized'
+      else if (res.status === 403) err.code = 'forbidden'
+      else if (res.status === 404) err.code = 'not_found'
+      throw err
     }
     const ct = res.headers.get('content-type') || ''
+
     try { return ct.includes('application/json') ? await res.json() : await res.text() }
     finally { release() }
   }
