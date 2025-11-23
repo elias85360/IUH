@@ -30,6 +30,8 @@ services:
       POSTGRES_DB: ${DB_NAME:-iot}
     ports:
       - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-iot}"]
       interval: 5s
@@ -111,16 +113,16 @@ services:
 
       # Sécurité / OIDC / RBAC
       RBAC_ENFORCE: "1"
-      ALLOW_API_KEY_WITH_RBAC: "1"
+      ALLOW_API_KEY_WITH_RBAC: "0"
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL_INTERNAL:-http://keycloak:8080/realms/iot}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-iot-dashboard}
-      OIDC_REQUIRE_AUD: "0"
-      OIDC_IGNORE_ISSUER: "1"
+      OIDC_REQUIRE_AUD: "1"
+      OIDC_IGNORE_ISSUER: "0"
       OIDC_JWKS_URL: ${OIDC_JWKS_URL_INTERNAL:-http://keycloak:8080/realms/iot/protocol/openid-connect/certs}
       RATE_LIMIT: ${API_RATE_LIMIT:-1000/1m}
 
       # CORS (SPA servie par nginx)
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.2.30:8081,http://localhost:5174}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.2.30:8081,http://localhost:5174,http://localhost:8081}
 
       # Ingestion Kienlab via proxy nginx
       DATA_SOURCE: ${DATA_SOURCE:-kienlab}
@@ -134,7 +136,7 @@ services:
       KIENLAB_DEBUG: ${KIENLAB_DEBUG:-0}
 
       # API key technique (à changer en prod réelle)
-      API_KEY: ${API_KEY:-testkey}
+      API_KEY: ${API_KEY:-}
 
       # Email alerts (SMTP)
       SMTP_HOST: ${SMTP_HOST}
@@ -245,6 +247,7 @@ volumes:
   api_data: {}
   api_logs: {}
   keycloak_db_data: {}
+  db_data: {}
 
 networks:
   default:
