@@ -10,9 +10,9 @@ Redirect URIs and Origins (dev + prod):
 
 - `http://localhost/*`, `http://localhost/auth/callback`
 - `http://localhost:5174/*`, `http://localhost:5174/auth/callback`
+- `http://localhost:8081/*`, `http://localhost:8081/auth/callback` (frontend served by nginx in compose)
 
 Backend validation options:
 
 - `OIDC_IGNORE_ISSUER=1` (tolerate different hostnames in compose); disable in real prod
 - `OIDC_REQUIRE_AUD=1` to enforce `aud` matches `OIDC_CLIENT_ID`
-

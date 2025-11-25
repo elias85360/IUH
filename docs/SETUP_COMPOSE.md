@@ -9,7 +9,7 @@ docker compose up -d --build
 
 Services brought up:
 
-- nginx:80/443, api:4001 (published), keycloak:8080, db:5432, redis:6379, prometheus:9090, grafana:3000, mqtt-broker:1883/9001, py-forecast:8000
+- nginx:8081→80 (443 commented in compose), api:4001→4000, keycloak:8080, db:5432, redis:6379, prometheus:9090, grafana:3000
 
 Frontend build args (injected at image build):
 
@@ -28,4 +28,3 @@ Security hardening before going live:
 - Remove `API_KEY` or set `ALLOW_API_KEY_WITH_RBAC=0`
 - Set `OIDC_REQUIRE_AUD=1` and `OIDC_IGNORE_ISSUER=0` when FQDN is stable
 - Restrict `CORS_ORIGIN` to your hostname
-

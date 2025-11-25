@@ -6,7 +6,7 @@ Prerequisites: Node 20+, Docker, Docker Compose.
 
 ```
 cd infra
-docker compose up -d db redis keycloak api nginx prometheus grafana mqtt-broker py-forecast
+docker compose up -d db redis keycloak api nginx prometheus grafana
 ```
 
 2) Configure Keycloak:
@@ -27,7 +27,7 @@ npm run dev
 Ensure `frontend/.env` contains:
 
 ```
-VITE_API_PROXY_TARGET=http://localhost
+VITE_API_PROXY_TARGET=http://localhost:4001
 VITE_DATA_SOURCE=
 VITE_OIDC_ISSUER_URL=http://localhost:8080/realms/iot
 VITE_OIDC_CLIENT_ID=iot-dashboard
@@ -39,5 +39,4 @@ Open http://localhost:5174.
 Notes:
 
 - In master mode (`VITE_DATA_SOURCE=master`), the app hits Kienlab `/kienlab/api/raw...`; most deployments require auth and will return 401 unless you add appropriate headers at the proxy.
-- For parity with prod, keep `VITE_DATA_SOURCE` empty to use the backend API.
-
+- For parity with prod, keep `VITE_DATA_SOURCE` empty to use the backend API via compose (`api` exposed on 4001).

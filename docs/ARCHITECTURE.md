@@ -17,8 +17,6 @@ Services (docker-compose):
 - redis – cache and nonce store (optional)
 - prometheus – scrapes API metrics
 - grafana – dashboards for metrics
-- mqtt-broker – Eclipse Mosquitto (optional ingestion)
-- py-forecast – simple FastAPI forecasting microservice (optional)
 
 Key flows:
 
@@ -27,4 +25,3 @@ Key flows:
 - api → db/redis: mirror writes, read queries, caching
 - api → keycloak: OIDC JWKS fetch and token verification
 - prometheus → api: `/metrics` scrape
-
