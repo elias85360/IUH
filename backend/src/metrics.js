@@ -63,6 +63,7 @@ function initMetrics(app) {
     state.enabled = false
     return false
   }
+  state.enabled = true
 
   const register = client.register
   try {
@@ -224,6 +225,24 @@ function initMetrics(app) {
   }
 }
 
+function httpMetricsMiddleware() {
+  if (!state.enabled || !client) return (_req, _res, next) => next()
+  return (req, res, next) => {
+    state.httpInFlight.inc()
+    const start = process.hrtime.bigint()
+    res.once('finish', () => {
+      state.httpInFlight.dec()
+      const duration = Number(process.hrtime.bigint() - start) / 1e9
+      const route = req.route && req.route.path ? req.route.path : (req.path || 'unknown')
+      const labels = { method: req.method, route, status: String(res.statusCode) }
+      if (state.httpDuration) state.httpDuration.observe(labels, duration)
+      if (state.httpTotal) state.httpTotal.inc(labels)
+      if (state.httpErrors && res.statusCode >= 500) state.httpErrors.inc(labels)
+    })
+    next()
+  }
+}
+
 function recordCacheHit(route) {
   if (!state.enabled || !client) return
   const r = route || 'unknown'
@@ -354,6 +373,7 @@ module.exports = {
   recordCacheHit,
   recordCacheMiss,
   recordPointsReturned,
+  httpMetricsMiddleware,
   incSocketConnections,
   decSocketConnections,
   recordAlert,

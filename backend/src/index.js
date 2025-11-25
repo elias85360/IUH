@@ -12,7 +12,7 @@ const { attachSocket } = require('./socket')
 const { startIngestion } = require('./sources')
 const { applySecurity } = require('./security')
 const { createMailerFromEnv, createRoutersFromEnv } = require('./notify')
-const { initMetrics } = require('./metrics')
+const { initMetrics, httpMetricsMiddleware } = require('./metrics')
 const { validateEnv } = require('./envValidation')
 
 // Fillet de sécurité globale sur le process Node.js
@@ -63,6 +63,7 @@ function main() {
   console.log('CORS allowed origins:', allowAll ? '*' : rawOrigins.join(', '))
 
   applySecurity(app)
+  app.use(httpMetricsMiddleware())
   app.use(morgan('combined'))
   // Compression and body limits
   app.use(compression())
@@ -82,26 +83,26 @@ function main() {
   app.set('alertRouters', routers)
   buildApi({ app, store, mailer })
 
-  app.use((req, res, next, err) => {
+  app.use((err, req, res, next) => {
+    const status =
+      err && Number.isInteger(err.statusCode) ? err.statusCode
+      : err && Number.isInteger(err.status) ? err.status
+      : 500
+    const requestId = req.id || req.requestId
     try {
-      console.error('[http:error]', {
+      console.error(JSON.stringify({
+        event: 'http_error',
+        requestId,
         method: req.method,
         path: req.originalUrl,
+        status,
         message: err && err.message ? err.message : String(err),
-      })
+      }))
     } catch {}
 
     if (res.headersSent) return next(err)
-
-    const status = 
-      err && Number.isInteger(err.status)
-        ? err.statusCode
-        : 500
-    const payload = { error: 'internal_error' }
-    if (process.env.NODE_ENV !== 'production') {
-      payload.details = String(err && err.message ? err.message : err)
-    }
-
+    const payload = { error: 'internal_error', code: err && err.code ? err.code : 'internal_error', requestId }
+    if (process.env.NODE_ENV !== 'production') payload.details = String(err && err.message ? err.message : err)
     res.status(status).json(payload)
   })
 

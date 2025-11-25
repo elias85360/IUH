@@ -438,6 +438,9 @@ function requireRole(role, enforce = false) {
 
 module.exports.requireAuth = requireAuth;
 module.exports.requireRole = requireRole;
+module.exports.parseRateLimit = parseRateLimit;
+module.exports.verifyHmac = verifyHmac;
+module.exports.canonicalPathWithSortedQuery = canonicalPathWithSortedQuery;
 
 // -------- Nonce store (Redis preferred, in-memory fallback) --------
 const nonceMem = new Map() // key -> exp

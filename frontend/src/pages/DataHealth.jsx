@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api.js'
 import { useUiStore } from '../state/filters.js'
 import { useAssets } from '../state/assets.js'
@@ -232,7 +232,7 @@ function CompletenessHeatmap({ rows, from, to }) {
         <div></div>
         {Array.from({length:24},(_,h)=>(<div key={'h'+h} style={{fontSize:10, textAlign:'center'}}>{h}</div>))}
         {days.map((dayTs, di)=> (
-          <>
+          <Fragment key={`${row.deviceId}-${row.metricKey}-day-${di}`}>
             <div key={'dlabel-'+di} style={{fontSize:10}}>{labels[new Date(dayTs).getDay()]}</div>
             {Array.from({length:24},(_,h)=>{
               const ts = dayTs + h*60*60*1000
@@ -240,7 +240,7 @@ function CompletenessHeatmap({ rows, from, to }) {
               const bg = ok ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.4)'
               return <div key={'c'+di+'-'+h} title={(new Date(ts).toLocaleString()) + ' • ' + (ok?'present':'missing')} style={{height:18, background:bg, border:'1px solid rgba(255,255,255,0.08)'}} />
             })}
-          </>
+          </Fragment>
         ))}
       </div>
     </div>

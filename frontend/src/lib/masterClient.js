@@ -2,11 +2,15 @@
 // When VITE_DATA_SOURCE === 'master', all data is pulled directly from the
 // remote master API (raw endpoint), and we emulate aggregates/bucketing client-side.
 
-const MODE = (import.meta.env.VITE_DATA_SOURCE || '').toLowerCase()
+const env = (typeof globalThis !== 'undefined' && globalThis.import?.meta?.env)
+  ? globalThis.import.meta.env
+  : (typeof process !== 'undefined' ? process.env || {} : {})
+
+const MODE = (env.VITE_DATA_SOURCE || '').toLowerCase()
 const IS_KIENLAB = MODE === 'master'
-const DEBUG = (import.meta.env.VITE_LOG_MASTER === '1')
-const MASTER_BASE = (import.meta.env.VITE_MASTER_BASE || '').replace(/\/$/, '') // e.g. '/kienlab/api' (with Vite proxy) or full https URL
-const DEVICES_ENV = (import.meta.env.VITE_KIENLAB_DEVICES || '').split(',').map(s=>s.trim()).filter(Boolean)
+const DEBUG = (env.VITE_LOG_MASTER === '1')
+const MASTER_BASE = (env.VITE_MASTER_BASE || '').replace(/\/$/, '') // e.g. '/kienlab/api' (with Vite proxy) or full https URL
+const DEVICES_ENV = (env.VITE_KIENLAB_DEVICES || '').split(',').map(s=>s.trim()).filter(Boolean)
 if (IS_KIENLAB && DEBUG) {
   console.info('[masterClient] MODE=master base=', MASTER_BASE, 'devices=', DEVICES_ENV)
 }
@@ -14,10 +18,10 @@ if (IS_KIENLAB && DEBUG) {
 // Optional mapping via env (either JSON in VITE_KIENLAB_MAP or individual keys)
 let MAP = {}
 try { 
-  MAP = JSON.parse(import.meta.env.VITE_KIENLAB_MAP || '{}')
+  MAP = JSON.parse(env.VITE_KIENLAB_MAP || '{}')
 } catch {}
 for (const key of ['U','I','P','E','F','pf','temp','humid']) {
-  const v = import.meta.env[`VITE_KIENLAB_MAP_${key}`]
+  const v = env[`VITE_KIENLAB_MAP_${key}`]
   if (v) MAP[key] = v
 }
 
@@ -126,7 +130,7 @@ function toMillis(v) {
   return NaN
 }
 
-function mapRow(row) {
+export function mapRow(row) {
   // Try multiple candidates for timestamp
   let ts = row.ts
   if (!Number.isFinite(ts)) ts = toMillis(row.timestamp)

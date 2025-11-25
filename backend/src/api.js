@@ -14,18 +14,27 @@ try { pdf = require('./pdf') } catch {}
 
 function buildApi({ app, store, mailer }) {
   const router = express.Router();
- 
   const RBAC_ENFORCE = String(process.env.RBAC_ENFORCE || '') === '1'
   router.use(apiKeyMiddleware(!!process.env.API_KEY));
   router.use(hmacMiddleware(String(process.env.API_HMAC_ENFORCE || '') === '1'));
   router.use(requireAuth(RBAC_ENFORCE));
-
   router.get("/health", (req, res) => {
     res.json({ ok: true, diagnostics: store.diagnostics() });
   });
-
   router.get("/healthz", (req, res) => {
     res.json({ ok: true, diagnostics: store.diagnostics() });
+  });
+
+  router.get("/ready", (req, res) => {
+    const components = {}
+    components.api = 'ok'
+    components.datastore = store ? 'ok' : 'fail'
+    const tsdbNeeded = store && store.enableTsdb
+    components.tsdb = tsdbNeeded ? (tsdb ? 'ok' : 'degraded') : 'na'
+    const wantsRedis = !!process.env.REDIS_URL
+    components.redis = wantsRedis ? (process.env.REDIS_URL ? 'unknown' : 'degraded') : 'na'
+    const ok = Object.values(components).every((v) => v === 'ok' || v === 'na')
+    res.status(ok ? 200 : 503).json({ ok, components })
   });
 
   // ------- Assets meta (RBAC: viewer read, analyst/admin write) -------
@@ -45,7 +54,6 @@ function buildApi({ app, store, mailer }) {
     const next = setAssetsMeta(parsed.data.updates, !!parsed.data.replace)
     res.json({ ok: true, meta: next })
   })
-
   // ------- Thresholds settings (RBAC: admin write) -------
   router.get('/settings/thresholds', requireRole('viewer', RBAC_ENFORCE), (_req, res) => {
     res.json(getSettings())
@@ -72,17 +80,14 @@ function buildApi({ app, store, mailer }) {
     const eff = effectiveFor({ deviceId, deviceMeta: meta })
     res.json({ deviceId, thresholds: eff })
   })
-
   router.get("/devices", requireRole('viewer', RBAC_ENFORCE), (req, res) => {
     res.json({ devices: store.getDevices() });
   });
-
   router.get("/metrics", requireRole('viewer', RBAC_ENFORCE), (req, res) => {
     const { deviceId } = req.query;
     // same metrics for all devices in this mock
     res.json({ metrics: store.getMetrics(deviceId) });
   });
-
   router.get("/kpis", requireRole('viewer', RBAC_ENFORCE), async (req, res) => withSpan('api.kpis', async () => {
     const num = z.coerce.number().int()
     const schema = z.object({
@@ -117,7 +122,6 @@ function buildApi({ app, store, mailer }) {
     await cacheSet(key, payload, 5)
     res.json(payload);
   }));
-
   router.get("/timeseries", requireRole('viewer', RBAC_ENFORCE), async (req, res) => withSpan('api.timeseries', async () => {
     const num = z.coerce.number().int()
     const schema = z.object({
@@ -169,11 +173,9 @@ function buildApi({ app, store, mailer }) {
     try { require('./metrics').recordPointsReturned('/api/timeseries', Array.isArray(data) ? data.length : 0) } catch {}
     res.json(payload);
   }));
-
   router.get("/diagnostics", requireRole('viewer', RBAC_ENFORCE), (req, res) => {
     res.json(store.diagnostics());
   });
-
   // Data quality and health summary per device/metric
   router.get('/quality', requireRole('viewer', RBAC_ENFORCE), (req, res) => {
     const num = z.coerce.number().int()

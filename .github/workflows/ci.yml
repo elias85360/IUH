@@ -19,7 +19,11 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      # Frontend: install, build, unit tests
+      - name: Install root tools (Playwright, perf)
+        working-directory: .
+        run: npm install
+
+      # Frontend: install, build, unit tests with coverage
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install
@@ -28,16 +32,20 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Frontend tests (Vitest coverage)
+        working-directory: frontend
+        run: npm run test -- --coverage
+
       # Backend: install and tests
       - name: Install backend dependencies
         working-directory: backend
         run: npm install
 
-      - name: Backend tests (jest, allow no tests for now)
+      - name: Backend tests (Jest coverage)
         working-directory: backend
         env:
           RBAC_ENFORCE: 0
-        run: npx jest --passWithNoTests
+        run: npx jest --coverage
 
       # Optional: Docker build (no push)
       - name: Build backend Docker image
@@ -48,11 +56,28 @@ jobs:
         working-directory: .
         run: docker build -f infra/nginx.Dockerfile -t iot-nginx:ci .
 
-      # Playwright E2E scaffold (disabled by default)
-      # - name: Install Playwright Browsers
-      #   working-directory: frontend
-      #   run: npx playwright install --with-deps
-      # - name: Run Playwright tests
-      #   working-directory: frontend
-      #   run: npx playwright test
+      # Playwright E2E (skips if no E2E_BASE_URL set)
+      - name: Install Playwright Browsers
+        working-directory: .
+        run: npx playwright install --with-deps
 
+      - name: Run Playwright tests
+        working-directory: .
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASS: ${{ secrets.E2E_PASS }}
+          E2E_ADMIN_USER: ${{ secrets.E2E_ADMIN_USER }}
+          E2E_ADMIN_PASS: ${{ secrets.E2E_ADMIN_PASS }}
+        run: npx playwright test
+        continue-on-error: true
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-reports
+          path: |
+            backend/coverage
+            frontend/coverage
+            playwright-report

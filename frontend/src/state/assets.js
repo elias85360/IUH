@@ -6,6 +6,12 @@ export const useAssets = create(persist((set, get) => ({
   setMeta(deviceId, patch) {
     set((s)=>({ meta: { ...s.meta, [deviceId]: { ...(s.meta[deviceId]||{}), ...patch } } }))
   },
+  setAll(next) {
+    set({ meta: next || {} })
+  },
+  reset() {
+    set({ meta: {} })
+  },
 }), { name: 'assets-meta' }))
 
  

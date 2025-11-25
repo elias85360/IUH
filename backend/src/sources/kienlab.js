@@ -77,11 +77,17 @@ function mapRow(row) {
   return { ts: Number(ts), values: Object.keys(out).length ? out : values }
 }
 
-async function fetchJson(url, headers) {
+async function fetchJson(url, headers, { timeoutMs = 5000 } = {}) {
   const f = (typeof fetch === 'function') ? fetch : (await import('node-fetch')).default
-  const res = await f(url, { headers })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null
+  try {
+    const res = await f(url, { headers, signal: ctrl ? ctrl.signal : undefined })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function normalizePayload(payload) {
@@ -96,6 +102,8 @@ function startKienlabHttp({ store }) {
   const list = parseList(process.env.KIENLAB_DEVICES)
   const length = Number(process.env.KIENLAB_LENGTH || 200)
   const pollMs = Math.max(1000, Number(process.env.KIENLAB_POLL_MS || 5000))
+  const timeoutMs = Math.max(1000, Number(process.env.KIENLAB_TIMEOUT_MS || 5000))
+  const maxRetries = Math.max(0, Number(process.env.KIENLAB_RETRY || 2))
   const debug = String(process.env.KIENLAB_DEBUG || '0') === '1'
   const maxInit = Math.max(0, Number(process.env.KIENLAB_MAX_INIT_ROWS || 500))
   if (!base || !list.length) {
@@ -116,7 +124,16 @@ function startKienlabHttp({ store }) {
     for (const url of cands) {
       try {
         if (debug) console.log('[kienlab] fetch', url)
-        payload = await fetchJson(url, headers); break
+        let attempts = 0
+        while (attempts <= maxRetries) {
+          try {
+            payload = await fetchJson(url, headers, { timeoutMs }); break
+          } catch (e) {
+            attempts++
+            if (attempts > maxRetries) throw e
+          }
+        }
+        if (payload) break
       } catch (e) {
         if (debug) console.warn('[kienlab] fetch error', url, e && e.message ? e.message : e)
       }

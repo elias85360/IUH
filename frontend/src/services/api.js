@@ -51,7 +51,7 @@ function hmacHeaders(method, path, bodyText) {
   return {}
 }
 
-function canonicalizePath(path) {
+export function canonicalizePath(path) {
   try {
     const [p, q] = String(path || '').split('?')
     if (!q) return p || '/'
