@@ -20,7 +20,7 @@ ENV VITE_OIDC_ISSUER_URL=${VITE_OIDC_ISSUER_URL} \
     VITE_API_BASE=${VITE_API_BASE} \
     VITE_DATA_SOURCE=${VITE_DATA_SOURCE}
 
-# Installation des dépendances (avec devDependencies pour le build)
+# Installation des dépendances (avec devDependencies pour le build) 
 COPY frontend/package*.json ./
 RUN npm install
 

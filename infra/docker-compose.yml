@@ -112,12 +112,12 @@ services:
       PREAGG_RETENTION_DAYS: "90"
 
       # Sécurité / OIDC / RBAC
-      RBAC_ENFORCE: "1"
-      ALLOW_API_KEY_WITH_RBAC: "0"
+      RBAC_ENFORCE: ${RBAC_ENFORCE:-1}
+      ALLOW_API_KEY_WITH_RBAC: ${ALLOW_API_KEY_WITH_RBAC:-0}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL_INTERNAL:-http://keycloak:8080/realms/iot}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-iot-dashboard}
-      OIDC_REQUIRE_AUD: "0"
-      OIDC_IGNORE_ISSUER: "0"
+      OIDC_REQUIRE_AUD: ${OIDC_REQUIRE_AUD:-0}        # 0 en dev, 1 en prod (via .env.*)
+      OIDC_IGNORE_ISSUER: ${OIDC_IGNORE_ISSUER:-0}
       OIDC_JWKS_URL: ${OIDC_JWKS_URL_INTERNAL:-http://keycloak:8080/realms/iot/protocol/openid-connect/certs}
       RATE_LIMIT: ${API_RATE_LIMIT:-1000/1m}
 
@@ -221,18 +221,17 @@ services:
       context: ..
       dockerfile: infra/nginx.Dockerfile
       args:
-        # Config OIDC injectée dans le build Vite
-        VITE_OIDC_ISSUER_URL: ${VITE_OIDC_ISSUER_URL:-http://192.168.2.30:8080/realms/iot}
+        VITE_OIDC_ISSUER_URL: ${VITE_OIDC_ISSUER_URL:-http://localhost:8080/realms/iot}
         VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-iot-dashboard}
-        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-http://192.168.2.30:8081}
+        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-http://localhost:8081}
         VITE_REQUIRE_AUTH: ${VITE_REQUIRE_AUTH:-1}
     restart: unless-stopped
 
     ports:
       - "8081:80"
-      # - "443:443"  # à activer avec TLS plus tard
+      # En PROD IUH, tu pourras utiliser par exemple :
+      # - "443:443"
     environment:
-      # Proxy vers Kienlab
       KIENLAB_PROXY_TARGET: ${KIENLAB_PROXY_TARGET:-http://eprophet.kienlab.com}
     depends_on:
       api:
@@ -241,6 +240,7 @@ services:
       - ./nginx/certs:/etc/nginx/certs:ro
     networks:
       - default
+
 
 volumes:
   api_data: {}
