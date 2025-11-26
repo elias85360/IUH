@@ -116,7 +116,7 @@ services:
       ALLOW_API_KEY_WITH_RBAC: "0"
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL_INTERNAL:-http://keycloak:8080/realms/iot}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-iot-dashboard}
-      OIDC_REQUIRE_AUD: "1"
+      OIDC_REQUIRE_AUD: "0"
       OIDC_IGNORE_ISSUER: "0"
       OIDC_JWKS_URL: ${OIDC_JWKS_URL_INTERNAL:-http://keycloak:8080/realms/iot/protocol/openid-connect/certs}
       RATE_LIMIT: ${API_RATE_LIMIT:-1000/1m}
