@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
       POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
-      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-Eprophet§123§_}
     volumes:
       - keycloak_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Eprophet§123§_}
       POSTGRES_DB: ${DB_NAME:-iot}
     ports:
       - "5432:5432"
@@ -73,7 +73,7 @@ services:
       KC_DB_URL_PORT: 5432
       KC_DB_URL_DATABASE: ${KEYCLOAK_DB_NAME:-keycloak}
       KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-Eprophet§123§_}
       KC_DB_SCHEMA: public
       KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-192.168.2.30}
       KC_HTTP_ENABLED: "true"
@@ -105,10 +105,10 @@ services:
       LOG_LEVEL: ${API_LOG_LEVEL:-info}
 
       # Persistence / cache
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-iot}
+      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-Eprophet§123§_}@db:5432/${DB_NAME:-iot}
       REDIS_URL: redis://redis:6379
       TSDB_MIRROR: "1"
-      TSDB_READ: "0"
+      TSDB_READ: "1"
       PREAGG_RETENTION_DAYS: "90"
 
       # Sécurité / OIDC / RBAC
@@ -203,7 +203,7 @@ services:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-Eprophet§123§_}
     depends_on:
       prometheus:
         condition: service_started
@@ -232,7 +232,7 @@ services:
       # En PROD IUH, tu pourras utiliser par exemple :
       # - "443:443"
     environment:
-      KIENLAB_PROXY_TARGET: ${KIENLAB_PROXY_TARGET:-http://eprophet.kienlab.com}
+      KIENLAB_PROXY_TARGET: ${KIENLAB_PROXY_TARGET:-http://eprophet.iuh.kienlab.com}
     depends_on:
       api:
         condition: service_started

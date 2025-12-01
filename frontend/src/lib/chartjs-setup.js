@@ -102,10 +102,10 @@ function applyLightCardTheme() {
   ChartJS.defaults.plugins.tooltip = {
     ...ChartJS.defaults.plugins.tooltip,
     cornerRadius: 8,
-    backgroundColor: '#0f172a',
-    titleColor: '#fff',
-    bodyColor: '#e5e7eb',
-    borderColor: '#0b2145',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    titleColor: '#0f172a',
+    bodyColor: '#0f172a',
+    borderColor: '#e2e8f0',
     borderWidth: 1
   }
 }
