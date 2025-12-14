@@ -47,15 +47,9 @@ const DEFAULT_LAYOUT = {
   lg: buildLayout(3),
   md: buildLayout(3),
   sm: buildLayout(2),
-  xs: buildLayout(1),
-  xxs: buildLayout(1),
+  xs: buildLayout(1).map((item) => (item.i === 'summary' ? { ...item, h: 3 } : item)),
+  xxs: buildLayout(1).map((item) => (item.i === 'summary' ? { ...item, h: 3 } : item)),
 }
-
-const PERIOD_CHOICES = [
-  { key: '30m', label: '30 min', ms: 30 * 60 * 1000, bucketMs: 2 * 60 * 1000 },
-  { key: '1h', label: '1 h', ms: 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 },
-  { key: '24h', label: '24 h', ms: 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 },
-]
 
 function readLayouts() {
   if (typeof window === 'undefined') return JSON.parse(JSON.stringify(DEFAULT_LAYOUT))
@@ -74,6 +68,12 @@ function normalizeLayouts(layouts) {
   for (const key of Object.keys(clone)) {
     if (Array.isArray(layouts[key])) {
       clone[key] = layouts[key]
+      // ensure summary tile stays tall enough on small screens
+      if (key === 'xs' || key === 'xxs') {
+        clone[key] = clone[key].map((item) =>
+          item.i === 'summary' && item.h < 3 ? { ...item, h: 3 } : item
+        )
+      }
     }
   }
   return clone
@@ -221,6 +221,7 @@ export default function HomePage({ devices }) {
             bgClass="tile-sub green"
             devices={visibleDevices}
             anchorNow={anchorNow}
+            period={period}
           />
         </div>
 
@@ -233,6 +234,7 @@ export default function HomePage({ devices }) {
             bgClass="tile-sub amber"
             devices={visibleDevices}
             anchorNow={anchorNow}
+            period={period}
           />
         </div>
 
@@ -245,6 +247,7 @@ export default function HomePage({ devices }) {
             bgClass="tile-sub blue"
             devices={visibleDevices}
             anchorNow={anchorNow}
+            period={period}
           />
         </div>
 
@@ -263,6 +266,7 @@ export default function HomePage({ devices }) {
           <SummaryTile
             devices={visibleDevices}
             anchorNow={anchorNow}
+            period={period}
             bgClass="tile-sub violet"
           />
         </div>
@@ -339,11 +343,10 @@ function DonutTileContent({ value, total, label, format = 'count', loading = fal
   )
 }
 
-function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, anchorNow }) {
-  const [periodKey, setPeriodKey] = useState('1h')
-  const periodPreset = PERIOD_CHOICES.find((p) => p.key === periodKey) || PERIOD_CHOICES[1]
+function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, anchorNow, period }) {
   const [series, setSeries] = useState([])
   const [loading, setLoading] = useState(false)
+  const bucketMs = useMemo(() => Math.max(60 * 1000, Math.floor(period.ms / 120)), [period.ms])
 
   useEffect(() => {
     let cancel = false
@@ -358,9 +361,9 @@ function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, ancho
         const data = await fetchAggregatedSeries({
           devices,
           metricKey,
-          from: anchorNow - periodPreset.ms,
+          from: anchorNow - period.ms,
           to: anchorNow,
-          bucketMs: periodPreset.bucketMs,
+          bucketMs,
         })
         if (!cancel) setSeries(data)
       } catch {
@@ -372,7 +375,7 @@ function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, ancho
     return () => {
       cancel = true
     }
-  }, [devices, metricKey, periodPreset, anchorNow])
+  }, [devices, metricKey, anchorNow, period.ms, bucketMs])
 
   const values = series.map((p) => p.value).filter((v) => Number.isFinite(v))
   const avg = values.length ? values.reduce((acc, v) => acc + v, 0) / values.length : 0
@@ -384,17 +387,7 @@ function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, ancho
     >
       <div className={bgClass}>
         <div className="tile-filter-row">
-          <label htmlFor={`${metricKey}-period`} className="sr-only">Période</label>
-          <select
-            id={`${metricKey}-period`}
-            className="ghost-input"
-            value={periodKey}
-            onChange={(e) => setPeriodKey(e.target.value)}
-          >
-            {PERIOD_CHOICES.map((opt) => (
-              <option key={opt.key} value={opt.key}>{opt.label}</option>
-            ))}
-          </select>
+          <div className="chip">Période: {period.label || period.key}</div>
           <div className="tile-metric">{loading ? '--' : avg.toFixed(1)} {unit}</div>
         </div>
         <div className="tile-chart">
@@ -425,7 +418,7 @@ function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, ancho
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="tile-empty">{loading ? 'Chargement…' : 'Aucune donnée'}</div>
+            <div className="tile-empty">{loading ? 'Loading…' : 'No data'}</div>
           )}
         </div>
       </div>
@@ -433,9 +426,10 @@ function MetricAreaTile({ title, metricKey, unit, color, bgClass, devices, ancho
   )
 }
 
-function SummaryTile({ devices, anchorNow, bgClass }) {
+function SummaryTile({ devices, anchorNow, period, bgClass }) {
   const [series, setSeries] = useState([])
   const [loading, setLoading] = useState(false)
+  const bucketMs = useMemo(() => Math.max(60 * 1000, Math.floor(period.ms / 120)), [period.ms])
 
   useEffect(() => {
     let cancel = false
@@ -450,9 +444,9 @@ function SummaryTile({ devices, anchorNow, bgClass }) {
         const data = await fetchAggregatedSeries({
           devices,
           metricKey: 'P',
-          from: anchorNow - 60 * 60 * 1000,
+          from: anchorNow - period.ms,
           to: anchorNow,
-          bucketMs: 5 * 60 * 1000,
+          bucketMs,
         })
         if (!cancel) setSeries(data)
       } catch {
@@ -464,7 +458,7 @@ function SummaryTile({ devices, anchorNow, bgClass }) {
     return () => {
       cancel = true
     }
-  }, [devices, anchorNow])
+  }, [devices, anchorNow, period.ms, bucketMs])
 
   return (
     <TileCard title="Summary" subtitle={`${devices.length} device${devices.length > 1 ? 's' : ''}`}>
@@ -492,7 +486,7 @@ function SummaryTile({ devices, anchorNow, bgClass }) {
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="tile-empty">{loading ? 'Chargement…' : 'Aucune donnée'}</div>
+            <div className="tile-empty">{loading ? 'Loading…' : 'No data'}</div>
           )}
         </div>
         <div className="tile-summary-cards">

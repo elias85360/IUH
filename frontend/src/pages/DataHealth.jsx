@@ -218,7 +218,7 @@ function CompletenessHeatmap({ rows, from, to }) {
     for (let t = start; t <= to; t += 24*60*60*1000) arr.push(t)
     return arr
   }, [from, to])
-  const labels = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam']
+  const labels = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
   const present = new Set((row.presentBuckets||[]).map(Number))
   return (
     <div>

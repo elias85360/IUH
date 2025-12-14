@@ -76,12 +76,12 @@ export default function AlertsPage() {
         </div> 
       </div>
       <div className="panel" style={{marginTop:12}}>
-        <div className="panel-title">Résumé</div>
+        <div className="panel-title">Summary</div>
         <div className="row" style={{gap:12, flexWrap:'wrap'}}>
           <div className="badge">Total: {summary.total}</div>
-          <div className="badge" style={{borderColor:'#f97316', color:'#f97316'}}>Non ack: {summary.unacked}</div>
-          <div className="badge">Dernière alerte: {summary.latest}</div>
-          {windowMin ? <div className="badge">Fenêtre: {windowMin} min</div> : <div className="badge">Fenêtre: tout</div>}
+          <div className="badge" style={{borderColor:'#f97316', color:'#f97316'}}>No ack: {summary.unacked}</div>
+          <div className="badge">Last alert: {summary.latest}</div>
+          {windowMin ? <div className="badge">Window: {windowMin} min</div> : <div className="badge">Window: all</div>}
         </div>
       </div>
       <div className="panel" style={{marginTop:12}}>

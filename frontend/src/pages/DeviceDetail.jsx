@@ -88,6 +88,7 @@ export default function DeviceDetail({ devices, metrics }) {
   const { period, anchorNow, valueMin, valueMax, hoverTs, setHoverTs, clearHover } = useUiStore()
   const { meta } = useAssets()
   const [modal, setModal] = useState({ open: false })
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const { byDevice, add, remove } = useAnnotations()
   const anns = byDevice[id] || []
   const { options, getThreshold, seriesColors, setSeriesColor, resetSeriesColor } = useSettings()
@@ -100,6 +101,7 @@ export default function DeviceDetail({ devices, metrics }) {
   const from = anchorNow - period.ms
   const to = anchorNow
   const modalPanelRef = useRef(null)
+  const fullscreenRef = useRef(null)
   const [advancedView, setAdvancedView] = useState(false)
   const [ultraFine, setUltraFine] = useState(false)
   const colors = useMemo(() => COLOR_PICKER_CONFIG.reduce((acc, { key }) => {
@@ -225,6 +227,29 @@ export default function DeviceDetail({ devices, metrics }) {
     }
   }, [modal.open])
 
+  // Attempt to enter fullscreen when a chart modal opens (for maximum detail on mobile/desktop).
+  useEffect(() => {
+    const syncFs = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', syncFs)
+    if (modal.open && fullscreenRef.current && !document.fullscreenElement) {
+      try { fullscreenRef.current.requestFullscreen().catch(()=>{}) } catch {}
+    }
+    if (!modal.open && document.fullscreenElement) {
+      try { document.exitFullscreen().catch(()=>{}) } catch {}
+    }
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFs)
+      if (document.fullscreenElement && !modal.open) {
+        try { document.exitFullscreen().catch(()=>{}) } catch {}
+      }
+    }
+  }, [modal.open])
+
+  const closeModal = () => {
+    setModal({ open: false })
+    try { if (document.fullscreenElement) document.exitFullscreen().catch(()=>{}) } catch {}
+  }
+
   if (!device) return <div className="panel">Device not found. <Link to="/devices">Back</Link></div>
 
   function strideDownsample(arr, max = 2000) {
@@ -284,7 +309,12 @@ export default function DeviceDetail({ devices, metrics }) {
   }
   const hasUIData = (U && U.length > 0) || (I && I.length > 0)
   const [effTh, setEffTh] = useState(null)
-  useEffect(()=>{ (async()=>{ try{ const r=await api.thresholdsEffective(id); setEffTh(r.thresholds||null) }catch{ setEffTh(null) } })() }, [id])
+  useEffect(()=>{ (async()=>{ 
+    try{ 
+      const r=await api.thresholdsEffective(id, { from, to, adaptive: true }) 
+      setEffTh(r.thresholds||null) 
+    }catch{ setEffTh(null) } 
+  })() }, [id, from, to])
   useEffect(()=>{ if (modal.open && advancedView) { try { registerBaseCharts(); registerZoom() } catch {} } }, [modal.open, advancedView])
   const thresholds = effTh || {
     U: getThreshold(id,'U'), I: getThreshold(id,'I'), P: getThreshold(id,'P'), F: getThreshold(id,'F'), pf: getThreshold(id,'pf'), temp: getThreshold(id,'temp'), humid: getThreshold(id,'humid')
@@ -1092,14 +1122,16 @@ export default function DeviceDetail({ devices, metrics }) {
           className="detail-modal-backdrop"
           role="dialog"
           aria-modal="true"
-          onClick={()=>setModal({open:false})}
-          onKeyDown={(e)=>{ if (e.key==='Escape') setModal({open:false}) }}
+          onClick={closeModal}
+          onKeyDown={(e)=>{ if (e.key==='Escape') closeModal() }}
         >
           <div
-            className="detail-modal-card"
+            className={`detail-modal-card ${isFullscreen ? 'fullscreen' : ''}`}
             onClick={(e)=>e.stopPropagation()}
             tabIndex={0}
             id="device-modal-panel"
+            ref={fullscreenRef}
+            style={isFullscreen ? { width: '100%', maxWidth: '100%', height: '100%', borderRadius: 0, padding: 16 } : undefined}
           >
             <div className="detail-modal-header">
               <div className="detail-modal-tags">
@@ -1123,7 +1155,7 @@ export default function DeviceDetail({ devices, metrics }) {
                     }
                     return !v
                   })}
-                  title="Affiche la courbe avec une granularité plus fine"
+                  title="Show the advanced analysis with more data points"
                 >
                   Analyse avancée
                 </button>
@@ -1134,12 +1166,12 @@ export default function DeviceDetail({ devices, metrics }) {
                       try { localStorage.setItem('adv-ultra', (!u) ? '1' : '0') } catch {}
                       return !u
                     })}
-                    title="Encore plus de points (min bucket ≈ 250ms)"
+                    title="Show more data points (min bucket ≈ 250ms)"
                   >
                     Ultra fin
                   </button>
                 )}
-                <button className="btn" onClick={()=>setModal({open:false})}>Fermer</button>
+                <button className="btn" onClick={closeModal}>Close</button>
               </div>
             </div>
             <div className="detail-modal-body">

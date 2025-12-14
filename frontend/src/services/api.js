@@ -276,7 +276,14 @@ export const api = MODE === 'master' && masterClient.isEnabled
       // Thresholds
       getThresholds: () => http('/api/settings/thresholds'),
       putThresholds: (payload) => http('/api/settings/thresholds', { method: 'PUT', body: JSON.stringify(payload) }),
-      thresholdsEffective: (deviceId) => http(`/api/thresholds/effective?deviceId=${encodeURIComponent(deviceId)}`),
+      thresholdsEffective: (deviceId, params={}) => {
+        const q = new URLSearchParams({ deviceId })
+        if (params.from) q.set('from', String(params.from))
+        if (params.to) q.set('to', String(params.to))
+        if (params.method) q.set('method', params.method)
+        if (params.adaptive !== false) q.set('adaptive', '1')
+        return http(`/api/thresholds/effective?${q.toString()}`)
+      },
       // Admin helpers
       adminStatus: () => http('/api/admin/status'),
       adminPing: (key) => fetch(`${getBaseUrl()}/api/admin/ping`, { headers: { 'authorization': key ? `Bearer ${key}` : '' } }).then(r=>r.json()),

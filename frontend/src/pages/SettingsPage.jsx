@@ -7,10 +7,10 @@ const METRICS = ['U', 'I', 'P', 'E', 'F', 'pf', 'temp', 'humid']
 const PERIOD_OPTIONS = [
   { key: '1h', label: '1 h' },
   { key: '24h', label: '24 h' },
-  { key: '7d', label: '7 jours' },
-  { key: '30d', label: '30 jours' },
-  { key: '6mo', label: '6 mois' },
-  { key: '1y', label: '1 an' },
+  { key: '7d', label: '7 days' },
+  { key: '30d', label: '30 days' },
+  { key: '6mo', label: '6 months' },
+  { key: '1y', label: '1 year' },
 ]
 
 export default function SettingsPage() {
@@ -18,6 +18,9 @@ export default function SettingsPage() {
   const { period, setPeriodKey, refreshNow, devices } = useUiStore()
   const [defaults, setDefaults] = useState({})
   const [deadbandPct, setDeadbandPct] = useState('')
+  const [adaptiveWarnPct, setAdaptiveWarnPct] = useState('5')
+  const [adaptiveCritPct, setAdaptiveCritPct] = useState('10')
+  const [adaptiveMethod, setAdaptiveMethod] = useState('mean')
   const [kpis, setKpis] = useState({})
 
   useEffect(() => {
@@ -26,6 +29,9 @@ export default function SettingsPage() {
         const s = await api.getThresholds()
         setDefaults(s.global || {})
         setDeadbandPct(String(s?.options?.deadbandPct ?? ''))
+        setAdaptiveWarnPct(String(s?.options?.adaptiveWarnPct ?? '5'))
+        setAdaptiveCritPct(String(s?.options?.adaptiveCritPct ?? '10'))
+        setAdaptiveMethod(s?.options?.adaptiveMethod || 'mean')
       } catch {}
     })()
   }, [])
@@ -193,17 +199,75 @@ export default function SettingsPage() {
               try {
                 const v = Number(deadbandPct)
                 if (!Number.isFinite(v) || v < 0) {
-                  alert('Valeur invalide')
+                  alert('Invalid value')
                   return
                 }
                 await api.putThresholds({ options: { deadbandPct: v } })
-                alert('Deadband mis à jour')
+                setOptions({ deadbandPct: v })
+                alert('Deadband updated')
               } catch {
-                alert('Échec de mise à jour')
+                alert('Update failed')
+              }
+            }}
+            >
+              Save deadband
+            </button>
+          <label className="row" style={{ gap: 6 }}>
+            Warn delta (%)
+            <input
+              className="input"
+              style={{ width: 80 }}
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              value={adaptiveWarnPct}
+              onChange={(e) => setAdaptiveWarnPct(e.target.value)}
+            />
+          </label>
+          <label className="row" style={{ gap: 6 }}>
+            Crit delta (%)
+            <input
+              className="input"
+              style={{ width: 80 }}
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              value={adaptiveCritPct}
+              onChange={(e) => setAdaptiveCritPct(e.target.value)}
+            />
+          </label>
+          <label className="row" style={{ gap: 6 }}>
+            Base
+            <select
+              className="select"
+              value={adaptiveMethod}
+              onChange={(e)=>setAdaptiveMethod(e.target.value)}
+            >
+              <option value="mean">Moyenne</option>
+              <option value="median">Médiane</option>
+            </select>
+          </label>
+          <button
+            className="btn"
+            onClick={async () => {
+              try {
+                const warn = Number(adaptiveWarnPct)
+                const crit = Number(adaptiveCritPct)
+                if (!Number.isFinite(warn) || !Number.isFinite(crit) || warn < 0 || crit < 0) {
+                  alert('Invalid values')
+                  return
+                }
+                await api.putThresholds({ options: { adaptiveWarnPct: warn, adaptiveCritPct: crit, adaptiveMethod } })
+                setOptions({ adaptiveWarnPct: warn, adaptiveCritPct: crit, adaptiveMethod })
+              alert('Updated Thresholds')
+              } catch {
+                alert('Update failed')
               }
             }}
           >
-            Save deadband
+            Save adaptifs
           </button>
         </div>
         <div style={{ overflowX: 'auto' }}>

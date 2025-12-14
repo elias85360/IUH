@@ -31,16 +31,16 @@ function mapLoadError(e) {
   const status = (e && e.status) || (statusMatch ? Number(statusMatch[1]) : undefined)
 
   if (status === 401 || e.code === 'unauthorized') {
-    return 'Session expirée ou non valide. Merci de vous reconnecter.'
+    return 'Session has expired. Please log in again.'
   }
   if (status === 403 || e.code === 'forbidden') {
-    return 'Accès refusé : votre compte ne dispose pas des droits suffisants.'
+    return 'Refused access: your account does not have sufficient rights.'
   }
   if (msg.includes('No backend reachable')) {
-    return 'Backend indisponible. Vérifiez que l’API est démarrée et joignable.'
+    return 'Backend unreachable. Please ensure the API is running and reachable.'
   }
   if (status === 500) {
-    return 'Erreur interne du serveur (500) lors du chargement des données.'
+    return 'Internal server error while loading data.'
   }
   return msg
 }
@@ -48,7 +48,7 @@ function mapLoadError(e) {
 function LoginControls() {
   const { isAuthenticated, user, login, logout, hasRole } = useAuth()
   const { lang, setLang } = useI18n()
-  if (!isAuthenticated()) return <button className="btn" onClick={()=>login({ redirectTo: window.location.pathname + window.location.search })}>Se connecter</button>
+  if (!isAuthenticated()) return <button className="btn" onClick={()=>login({ redirectTo: window.location.pathname + window.location.search })}>Login</button>
   const roles = []
   if (hasRole('admin')) roles.push('admin')
   else {
@@ -62,7 +62,7 @@ function LoginControls() {
         <option value="fr">fr</option>
         <option value="en">en</option>
       </select>
-      <button className="btn" onClick={logout}>Se déconnecter</button>
+      <button className="btn" onClick={logout}>Logout</button>
     </div>
   )
 }
@@ -166,7 +166,7 @@ export default function App() {
         </div>
         <div className="toolbar" style={{justifyContent:'space-between', marginTop:12}}>
           <div className="row" style={{gap:8}}>
-            <button className="btn primary" onClick={onLoad} disabled={loading || loaded}>{loaded? 'Données chargées' : (loading ? 'Chargement...' : 'Charger les données')}</button>
+            <button className="btn primary" onClick={onLoad} disabled={loading || loaded}>{loaded? 'Loaded data' : (loading ? 'Loading...' : 'Load data')}</button>
             {loaded && <span className="badge">{filteredDevices.length} devices</span>}
           </div>
           <div className="row" style={{gap:8}}>

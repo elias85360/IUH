@@ -64,7 +64,14 @@ function buildApi({ app, store, mailer }) {
       groups: z.record(z.any()).optional(),
       rooms: z.record(z.any()).optional(),
       devices: z.record(z.any()).optional(),
-      options: z.object({ zScore: z.number().optional(), emailNotify: z.boolean().optional(), deadbandPct: z.number().optional() }).optional(),
+      options: z.object({
+        zScore: z.number().optional(),
+        emailNotify: z.boolean().optional(),
+        deadbandPct: z.number().optional(),
+        adaptiveWarnPct: z.number().optional(),
+        adaptiveCritPct: z.number().optional(),
+        adaptiveMethod: z.enum(['mean', 'median']).optional(),
+      }).optional(),
     })
     const parsed = schema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: 'invalid payload', details: parsed.error.errors })
@@ -72,13 +79,64 @@ function buildApi({ app, store, mailer }) {
     res.json({ ok: true, settings: next })
   })
   router.get('/thresholds/effective', requireRole('viewer', RBAC_ENFORCE), (req, res) => {
-    const schema = z.object({ deviceId: z.string().min(1) })
+    const num = z.coerce.number().int()
+    const schema = z.object({
+      deviceId: z.string().min(1),
+      from: num.optional(),
+      to: num.optional(),
+      method: z.enum(['mean', 'median']).optional(),
+      adaptive: z.enum(['0', '1']).optional(),
+    }).refine((v) => (v.from == null || v.to == null || v.from <= v.to), { path: ['from'], message: 'from must be <= to' })
     const parsed = schema.safeParse(req.query)
     if (!parsed.success) return res.status(400).json({ error: 'invalid params', details: parsed.error.errors })
-    const { deviceId } = parsed.data
+    const { deviceId, from, to, method, adaptive } = parsed.data
     const meta = getAssetsMeta()[deviceId] || {}
-    const eff = effectiveFor({ deviceId, deviceMeta: meta })
-    res.json({ deviceId, thresholds: eff })
+    const effStatic = effectiveFor({ deviceId, deviceMeta: meta }) || {}
+    const adaptiveMode = adaptive === '1'
+    if (!adaptiveMode) return res.json({ deviceId, thresholds: effStatic })
+    const settings = getSettings()
+    const warnPct = Number(settings?.options?.adaptiveWarnPct ?? 5)
+    const critPct = Number(settings?.options?.adaptiveCritPct ?? 10)
+    const strategy = method || settings?.options?.adaptiveMethod || 'mean'
+    const metrics = store.getMetrics(deviceId) || []
+    const now = Date.now()
+    const fromTs = from != null ? from : now - (60 * 60 * 1000)
+    const toTs = to != null ? to : now
+    const calcBase = (series) => {
+      const vals = (series || []).map(p => Number(p.value)).filter((v) => Number.isFinite(v))
+      if (!vals.length) return null
+      if (strategy === 'median') {
+        const sorted = vals.slice().sort((a, b) => a - b)
+        const mid = Math.floor(sorted.length / 2)
+        return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+      }
+      const sum = vals.reduce((a, v) => a + v, 0)
+      return sum / vals.length
+    }
+    const thresholds = {}
+    for (const m of metrics) {
+      const dir = (effStatic[m.key]?.direction) || (m.key === 'pf' ? 'below' : 'above')
+      const series = store.querySeries({ deviceId, metricKey: m.key, from: fromTs, to: toTs })
+      const base = calcBase(series)
+      if (base == null) {
+        thresholds[m.key] = { ...(effStatic[m.key] || {}), direction: dir }
+        continue
+      }
+      const warn = dir === 'above' ? base * (1 + warnPct / 100) : base * (1 - warnPct / 100)
+      const crit = dir === 'above' ? base * (1 + critPct / 100) : base * (1 - critPct / 100)
+      thresholds[m.key] = {
+        ...(effStatic[m.key] || {}),
+        direction: dir,
+        warn,
+        crit,
+        adaptive: true,
+        base,
+        method: strategy,
+        warnPct,
+        critPct,
+      }
+    }
+    res.json({ deviceId, from: fromTs, to: toTs, thresholds })
   })
   router.get("/devices", requireRole('viewer', RBAC_ENFORCE), (req, res) => {
     res.json({ devices: store.getDevices() });

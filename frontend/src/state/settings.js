@@ -81,6 +81,9 @@ export const useSettings = create(persist((set, get) => ({
     yScale: 'linear', // 'linear' | 'log'
     theme: 'light', // 'dark' | 'light' (default: light across all pages)
     lang: 'fr', // 'fr' | 'en'
+    adaptiveWarnPct: 5,
+    adaptiveCritPct: 10,
+    adaptiveMethod: 'mean',
   },
   setOptions(patch) { set((s)=>({ options: { ...s.options, ...patch } })) },
 }), { name: 'dashboard-settings' }))

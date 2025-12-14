@@ -14,7 +14,14 @@ const DEFAULTS = {
   groups: {}, // group -> { metric -> threshold }
   rooms: {}, // room -> { metric -> threshold }
   devices: {}, // deviceId -> { metric -> threshold }
-  options: { zScore: 3, emailNotify: true, deadbandPct: 5 },
+  options: {
+    zScore: 3,
+    emailNotify: true,
+    deadbandPct: 5,
+    adaptiveWarnPct: 5,
+    adaptiveCritPct: 10,
+    adaptiveMethod: 'mean', // 'mean' | 'median'
+  },
 }
 
 let settings = loadJSON('thresholds.json', DEFAULTS)

@@ -134,7 +134,7 @@ export default function AssetsPage({ devices }) {
 
   async function suggestDescriptions() {
     if (!canEdit) return
-    const overwrite = window.confirm('Remplir automatiquement les descriptions à partir des métriques observées ?\nOK = écraser les descriptions existantes, Annuler = ne remplir que les vides.')
+    const overwrite = window.confirm('Fill in descriptions for all devices, even those that already have one? Click "Cancel" to only fill in missing descriptions.')
     setBusySuggest(true)
     try {
       let deadband = ''
@@ -156,11 +156,11 @@ export default function AssetsPage({ devices }) {
         if (metricsList.includes('pf') && k.pf) parts.push(`pf moy ${Number(k.pf.avg).toFixed(2)}`)
         if (metricsList.includes('temp') && k.temp) parts.push(`temp moy ${formatValue('temp', k.temp.avg)}`)
         if (metricsList.includes('humid') && k.humid) parts.push(`humid moy ${formatValue('humid', k.humid.avg)}`)
-        const measures = parts.length ? parts.join('; ') : 'Mesures électriques et environnementales'
-        const desc = `Appareil: ${m.name || d.name}. Mesures sur 7j: ${measures}. Seuils dans Settings; deadband ${deadband || 'par défaut'}.`
+        const measures = parts.length ? parts.join('; ') : 'Environmental and electric measures'
+        const desc = `Devices: ${m.name || d.name}. Measure on 7j: ${measures}. Seuils dans Settings; deadband ${deadband || 'par défaut'}.`
         setMeta(d.id, { description: desc })
       }
-      alert('Descriptions proposées. Vérifiez puis cliquez sur "Save meta" pour persister côté serveur.')
+      alert('Proposed descriptions have been set. Click "Save meta" to persist to server.')
     } finally { setBusySuggest(false) }
   }
 
