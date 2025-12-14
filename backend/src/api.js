@@ -447,6 +447,7 @@ function buildApi({ app, store, mailer }) {
     })
     const parsed = schema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: "invalid payload", details: parsed.error.errors })
+    if (!parsed.data.level !== 'crit') return res.status(204).end()
     if (!mailer) return res.status(501).json({ error: "mailer not configured" })
     try {
       await mailer.sendAlertEmail(parsed.data)

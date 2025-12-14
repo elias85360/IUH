@@ -346,7 +346,8 @@ export default function DeviceDetail({ devices, metrics }) {
   // Fire alerts on latest points
   useEffect(()=>{
     const latest = [
-      { m:'U', arr: U }, { m:'I', arr:I }, { m:'P', arr:P }, { m:'F', arr:F }, { m:'pf', arr:pf }, { m:'temp', arr:temp }, { m:'humid', arr:humid }
+      { m:'U', arr: U }, { m:'I', arr:I }, { m:'P', arr:P }, { m:'F', arr:F }, 
+      { m:'pf', arr:pf }, { m:'temp', arr:temp }, { m:'humid', arr:humid }
     ]
     for (const {m,arr} of latest){
       if (!arr || !arr.length) continue
@@ -355,7 +356,8 @@ export default function DeviceDetail({ devices, metrics }) {
       if (lvl==='warn' || lvl==='crit') {
         const alert = { deviceId: id, metricKey: m, ts: arr[arr.length-1].ts, value: v, level: lvl }
         alerts.push(alert)
-        if (lvl === 'crit' && hasRole('admin')) {
+        if (lvl === 'crit' && (hasRole('admin') || hasRole('analyst'))) {
+          const critAlert = { ...alert, level: 'crit'}
           import('../services/api.js').then(({ api })=>{
             api.notify(alert).catch(()=>{})
           })

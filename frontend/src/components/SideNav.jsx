@@ -77,7 +77,7 @@ export default function SideNav() {
           <button className="hamburger" onClick={()=>setOpen(o=>!o)} aria-label="Toggle menu">
           <span/><span/><span/>
         </button>
-        {open && <div className="brand">Fusion Smart</div>}
+        {open && <div className="brand">ServerSense ⚡</div>}
       </div>
 
       {/* Navigation principale */}

@@ -1,6 +1,6 @@
 /* Light theme only (global) */
 :root {
-  --bg: rgba(154, 246, 205, 0.333);
+  --bg: rgba(26, 80, 151, 0.755);
   --panel: #ffffff;
   --panel-2: #f3f4f6;
   --text: #0f172a;
@@ -300,7 +300,7 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
 .tile-sub .ghost-input,
 .tile-sub .btn{
   background: rgba(255,255,255,0.12);
-  color: inherit;
+  /* color: inherit; */
   border-color: rgba(255,255,255,0.35);
 }
 .tile-sub .ghost-input::placeholder{ color: rgba(255,255,255,0.75); }
