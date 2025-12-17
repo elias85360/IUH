@@ -7,6 +7,8 @@
   "rememberMe": true,
   "resetPasswordAllowed": true,
   "bruteForceProtected": true,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 43200,
 
   "roles": {
     "realm": [
@@ -25,14 +27,14 @@
       "bearerOnly": false,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "access.token.lifespan": "1800",
-        "client.session.idle.timeout": "3600",
-        "client.session.max.lifespan": "7200",
+        "access.token.lifespan": "14400",
+        "client.session.idle.timeout": "28800",
+        "client.session.max.lifespan": "43200",
         "post.logout.redirect.uris": "+",
         "backchannel.logout.session.required": "true",
         "backchannel.logout.revoke.offline.tokens": "false"
@@ -74,7 +76,8 @@
       ],
       "optionalClientScopes": [
         "address",
-        "phone"
+        "phone",
+        "offline_access"
       ],
       "protocolMappers": [
         {
